@@ -1,0 +1,1 @@
+export default function Loading(){return <main className="state-page"><div className="spinner"/><h1>Memuat Meta Ads Inbox…</h1></main>}

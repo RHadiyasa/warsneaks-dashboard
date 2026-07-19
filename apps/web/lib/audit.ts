@@ -1,0 +1,2 @@
+import type { Prisma } from "@prisma/client";
+export async function recordAudit(event:{workspaceId:string;actorId?:string;action:string;entityType:string;entityId?:string;metadata?:Prisma.InputJsonValue}){if(!process.env.DATABASE_URL)return;const {db}=await import("@warsneaks/db");await db.auditLog.create({data:event})}

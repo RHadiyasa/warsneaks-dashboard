@@ -1,0 +1,1 @@
+"use client";export default function ErrorPage({reset}:{reset:()=>void}){return <main className="state-page"><span className="error-status">Scan data unavailable</span><h1>Meta Ads Inbox tidak dapat dimuat</h1><p>Existing evidence tetap aman. Coba lagi.</p><button onClick={reset}>Coba lagi</button></main>}

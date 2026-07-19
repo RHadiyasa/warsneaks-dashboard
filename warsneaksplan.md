@@ -778,24 +778,24 @@ Create a stable application foundation and visible system health.
 
 ### Deliverables
 
-- Monorepo structure.
-- Web app and worker app.
-- PostgreSQL and initial Prisma migrations.
-- Authentication and default single-user workspace.
-- Base navigation and responsive shell.
-- Background job lifecycle.
-- Audit logging.
-- Source/integration health model.
-- Global date/channel filters.
-- Seed data for demo and tests.
-- Empty Command Center with real queries against seed data.
+- [x] Monorepo structure.
+- [x] Web app and worker app.
+- [x] PostgreSQL and initial Prisma migrations.
+- [x] Authentication and default single-user workspace.
+- [x] Base navigation and responsive shell.
+- [x] Background job lifecycle.
+- [x] Audit logging.
+- [x] Source/integration health model.
+- [x] Global date/channel filters.
+- [x] Seed data for demo and tests.
+- [x] Empty Command Center with real queries against seed data.
 
 ### Acceptance gate
 
-- Fresh install, migrate, seed, build, lint, and tests pass.
-- Web app can enqueue a sample job and display its completion.
-- Protected routes reject unauthenticated access.
-- Dashboard clearly handles loading, empty, error, and stale states.
+- [x] Fresh install, migrate, seed, build, lint, and tests pass.
+- [x] Web app can enqueue a sample job and display its completion.
+- [x] Protected routes reject unauthenticated access.
+- [x] Dashboard clearly handles loading, empty, error, and stale states.
 
 ## Phase 2 - Meta Ads Spy and Opportunity Inbox
 

@@ -1,0 +1,1 @@
+import { redirect } from "next/navigation";import { readSession } from "@web/lib/auth";import { getInbox } from "@web/lib/phase2/service";import MetaAdsInbox from "@web/components/meta-ads-inbox";export default async function MetaAdsPage(){if(!await readSession())redirect("/login");return <MetaAdsInbox initial={await getInbox()}/>}

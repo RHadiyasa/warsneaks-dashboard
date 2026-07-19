@@ -1,0 +1,1 @@
+import { Phase2MemoryStore } from "../../../../packages/domain/src/phase2";const globalStore=globalThis as unknown as {phase2?:Phase2MemoryStore};export const phase2Memory=globalStore.phase2??new Phase2MemoryStore();globalStore.phase2=phase2Memory;
