@@ -1,0 +1,1 @@
+"use client";export default function ErrorPage({reset}:{reset:()=>void}){return <main className="state-page"><span className="status error-status">Gangguan data</span><h1>Command Center tidak dapat dimuat</h1><p>Data terakhir tetap aman. Coba muat ulang.</p><button onClick={reset}>Coba lagi</button></main>}

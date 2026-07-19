@@ -1,0 +1,97 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum JobStatus {
+  queued
+  running
+  succeeded
+  partial
+  failed
+  cancelled
+}
+
+enum IntegrationStatus {
+  healthy
+  stale
+  error
+  disconnected
+}
+
+model Workspace {
+  id           String              @id @default(cuid())
+  name         String
+  locale       String              @default("id-ID")
+  currency     String              @default("IDR")
+  timezone     String              @default("Asia/Jakarta")
+  users        User[]
+  jobs         BackgroundJob[]
+  auditLogs    AuditLog[]
+  integrations SourceIntegration[]
+  createdAt    DateTime            @default(now())
+  updatedAt    DateTime            @updatedAt
+}
+
+model User {
+  id           String    @id @default(cuid())
+  workspaceId  String
+  workspace    Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  email        String    @unique
+  passwordHash String
+  name         String
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+}
+
+model BackgroundJob {
+  id             String    @id @default(cuid())
+  workspaceId    String
+  workspace      Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  type           String
+  status         JobStatus @default(queued)
+  idempotencyKey String
+  attempts       Int       @default(0)
+  payload        Json?
+  result         Json?
+  errorCode      String?
+  createdAt      DateTime  @default(now())
+  startedAt      DateTime?
+  finishedAt     DateTime?
+
+  @@unique([workspaceId, idempotencyKey])
+  @@index([status, createdAt])
+}
+
+model AuditLog {
+  id          String    @id @default(cuid())
+  workspaceId String
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  actorId     String?
+  action      String
+  entityType  String
+  entityId    String?
+  metadata    Json?
+  createdAt   DateTime  @default(now())
+
+  @@index([workspaceId, createdAt])
+}
+
+model SourceIntegration {
+  id             String            @id @default(cuid())
+  workspaceId    String
+  workspace      Workspace         @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  source         String
+  status         IntegrationStatus @default(disconnected)
+  lastSyncedAt   DateTime?
+  lastErrorCode  String?
+  freshnessHours Int               @default(24)
+  createdAt      DateTime          @default(now())
+  updatedAt      DateTime          @updatedAt
+
+  @@unique([workspaceId, source])
+}

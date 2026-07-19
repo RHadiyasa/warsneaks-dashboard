@@ -1,0 +1,1 @@
+{"schemaVersion":1,"orders":[{"externalId":"ORD-DEMO-001","source":"manual_fixture","orderedAt":"2026-07-10T03:00:00Z","currency":"IDR","grossSales":"750000","discounts":"25000","items":[{"sku":"WS-DEMO-01","quantity":5,"unitPrice":"150000"}]}]}

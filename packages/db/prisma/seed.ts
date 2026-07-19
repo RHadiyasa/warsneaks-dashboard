@@ -1,0 +1,4 @@
+import { PrismaClient } from "@prisma/client"; import { hash } from "bcryptjs";
+const db=new PrismaClient();
+async function main(){const workspace=await db.workspace.upsert({where:{id:"demo-workspace"},update:{},create:{id:"demo-workspace",name:"WarSneaks Demo"}});await db.user.upsert({where:{email:process.env.DEMO_EMAIL||"owner@warsneaks.local"},update:{},create:{workspaceId:workspace.id,email:process.env.DEMO_EMAIL||"owner@warsneaks.local",name:"Owner",passwordHash:await hash(process.env.DEMO_PASSWORD||"change-me-before-production",12)}});await db.sourceIntegration.upsert({where:{workspaceId_source:{workspaceId:workspace.id,source:"manual_inventory"}},update:{status:"healthy",lastSyncedAt:new Date()},create:{workspaceId:workspace.id,source:"manual_inventory",status:"healthy",lastSyncedAt:new Date()}});console.log("Seeded demo-workspace and single owner")}
+main().finally(()=>db.$disconnect());

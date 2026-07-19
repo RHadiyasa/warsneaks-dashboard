@@ -1,0 +1,1 @@
+import { NextResponse } from "next/server";import { readSession } from "@web/lib/auth";import { enqueueSample } from "@web/lib/store";export async function POST(){if(!await readSession())return NextResponse.json({code:"UNAUTHENTICATED"},{status:401});return NextResponse.json(enqueueSample(),{status:202})}

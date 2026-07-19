@@ -1,0 +1,9 @@
+{
+  "schemaVersion": 1,
+  "keyword": "sepatu sneakers pria",
+  "exportedAt": "2026-07-19T00:00:00Z",
+  "ads": [
+    {"libraryId":"DEMO-1001","pageName":"Atlas Footwear","body":"Sneakers ringan untuk aktivitas harian.","headline":"Nyaman Sepanjang Hari","cta":"SHOP_NOW","destinationUrl":"https://example.invalid/atlas-1001","startedRunningAt":"2026-07-01T00:00:00Z","isActive":true,"platforms":["facebook","instagram"]},
+    {"libraryId":"DEMO-1002","pageName":"North Star Shoes","body":"Sepatu kasual dengan sol fleksibel.","headline":"Diskon Demo 20%","cta":"LEARN_MORE","destinationUrl":"https://example.invalid/north-1002","startedRunningAt":"2026-07-05T00:00:00Z","isActive":true,"platforms":["instagram"]}
+  ]
+}

@@ -1,0 +1,1 @@
+import { NextResponse } from "next/server";import { readSession } from "@web/lib/auth";import { summary } from "@web/lib/store";export async function GET(){if(!await readSession())return NextResponse.json({code:"UNAUTHENTICATED"},{status:401});return NextResponse.json(summary())}

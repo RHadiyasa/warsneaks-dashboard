@@ -1,0 +1,1 @@
+{"schemaVersion":1,"movements":[{"externalId":"GR-DEMO-001","type":"purchase_receipt","sku":"WS-DEMO-01","quantity":10,"unitCost":"80000","currency":"IDR","occurredAt":"2026-07-08T02:00:00Z"},{"externalId":"SALE-DEMO-001","type":"sale","sku":"WS-DEMO-01","quantity":-5,"unitCostSnapshot":"80000","currency":"IDR","occurredAt":"2026-07-10T03:00:00Z"}]}

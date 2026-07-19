@@ -1,0 +1,1 @@
+{"schemaVersion":1,"fees":[{"orderExternalId":"ORD-DEMO-001","type":"marketplace_fee","amount":"28750","currency":"IDR"},{"orderExternalId":"ORD-DEMO-001","type":"payment_fee","amount":"5750","currency":"IDR"},{"orderExternalId":"ORD-DEMO-001","type":"shipping_subsidy","amount":"20000","currency":"IDR"}]}
