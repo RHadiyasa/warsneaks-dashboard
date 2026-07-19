@@ -102,6 +102,9 @@ model SourceIntegration {
 enum ScanStatus {
   queued
   running
+  collecting
+  stop_requested
+  summarizing
   succeeded
   partial
   failed
@@ -173,9 +176,21 @@ model AdScan {
   workspaceId  String
   workspace    Workspace       @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   keyword      String
+  country      String          @default("ID")
   method       String
   status       ScanStatus      @default(queued)
-  resultCount  Int             @default(0)
+  resultCount         Int             @default(0)
+  targetCount         Int             @default(100)
+  discoveredCount     Int             @default(0)
+  scrollCount         Int             @default(0)
+  duplicateAdsCount   Int             @default(0)
+  duplicateGroupCount Int             @default(0)
+  totalInstances      Int             @default(0)
+  highDuplicateCount  Int             @default(0)
+  advertiserCount     Int             @default(0)
+  progressMessage     String?
+  stopRequestedAt     DateTime?
+  summaryStartedAt    DateTime?
   errorCode    String?
   errorMessage String?
   startedAt    DateTime?

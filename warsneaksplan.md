@@ -805,24 +805,27 @@ Turn market signals into durable evidence and business decisions.
 
 ### Deliverables
 
-- Keyword scan form.
-- Playwright worker scan plus JSON/manual import fallback.
-- `Advertiser`, `CompetitorAd`, `AdScan`, and `AdObservation` models.
-- Stable source ID/fingerprint deduplication.
-- Scan progress and partial error UI.
-- Ad list/detail, filters, tags, notes, and watchlist.
-- Advertiser watchlist.
-- Observation history.
-- Create opportunity from one or multiple ads.
-- Opportunity lifecycle and decision log.
-- Basic evidence-based score and confidence.
+- [x] Keyword scan form.
+- [x] Playwright worker scan plus JSON/manual import fallback.
+- [x] `Advertiser`, `CompetitorAd`, `AdScan`, and `AdObservation` models.
+- [x] Stable source ID/fingerprint deduplication.
+- [x] Scan progress and partial error UI.
+- [x] Configurable scan target (10-500), incremental auto-scroll, and durable live result count.
+- [x] Graceful `Stop & rangkum` flow with collecting, stop-requested, summarizing, and succeeded states.
+- [x] Extension-style duplicate, instance, high-duplicate, and advertiser summary.
+- [x] Ad list/detail, filters, tags, notes, and watchlist.
+- [x] Advertiser watchlist.
+- [x] Observation history.
+- [x] Create opportunity from one or multiple ads.
+- [x] Opportunity lifecycle and decision log.
+- [x] Basic evidence-based score and confidence.
 
 ### Acceptance gate
 
-- Running the same fixture twice creates one canonical ad and two observations.
-- Failed scans do not erase existing data.
-- User can move from scan result to a saved opportunity and next action.
-- Scraper normalization has fixture-based regression tests.
+- [x] Running the same fixture twice creates one canonical ad and two observations.
+- [x] Failed scans do not erase existing data.
+- [x] User can move from scan result to a saved opportunity and next action.
+- [x] Scraper normalization has fixture-based regression tests.
 
 ### Deferred
 

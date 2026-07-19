@@ -1,0 +1,16 @@
+ALTER TYPE "ScanStatus" ADD VALUE IF NOT EXISTS 'collecting';
+ALTER TYPE "ScanStatus" ADD VALUE IF NOT EXISTS 'stop_requested';
+ALTER TYPE "ScanStatus" ADD VALUE IF NOT EXISTS 'summarizing';
+
+ALTER TABLE "AdScan"
+  ADD COLUMN "targetCount" INTEGER NOT NULL DEFAULT 100,
+  ADD COLUMN "discoveredCount" INTEGER NOT NULL DEFAULT 0,
+  ADD COLUMN "scrollCount" INTEGER NOT NULL DEFAULT 0,
+  ADD COLUMN "duplicateAdsCount" INTEGER NOT NULL DEFAULT 0,
+  ADD COLUMN "duplicateGroupCount" INTEGER NOT NULL DEFAULT 0,
+  ADD COLUMN "totalInstances" INTEGER NOT NULL DEFAULT 0,
+  ADD COLUMN "highDuplicateCount" INTEGER NOT NULL DEFAULT 0,
+  ADD COLUMN "advertiserCount" INTEGER NOT NULL DEFAULT 0,
+  ADD COLUMN "progressMessage" TEXT,
+  ADD COLUMN "stopRequestedAt" TIMESTAMP(3),
+  ADD COLUMN "summaryStartedAt" TIMESTAMP(3);

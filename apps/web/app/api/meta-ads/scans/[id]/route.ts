@@ -1,0 +1,2 @@
+import { NextResponse } from "next/server";import { readSession } from "@web/lib/auth";import { getScanProgress } from "@web/lib/phase2/service";
+export async function GET(_:Request,{params}:{params:Promise<{id:string}>}){if(!await readSession())return NextResponse.json({code:"UNAUTHENTICATED"},{status:401});try{return NextResponse.json(await getScanProgress((await params).id))}catch{return NextResponse.json({code:"SCAN_NOT_FOUND"},{status:404})}}

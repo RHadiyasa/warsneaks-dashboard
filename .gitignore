@@ -1,5 +1,13 @@
-﻿node_modules/
+node_modules/
 .next/
 .env
 *.log
 packages/db/generated/
+.ssh-tunnel.pid
+.meta-ads-worker.pid
+meta-ads-worker.log
+meta-ads-worker.err.log
+.dev-server.pid
+dev-server.log
+dev-server.err.log
+*.local
