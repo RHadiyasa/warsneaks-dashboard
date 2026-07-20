@@ -24,21 +24,21 @@ enum IntegrationStatus {
 }
 
 model Workspace {
-  id           String              @id @default(cuid())
-  name         String
-  locale       String              @default("id-ID")
-  currency     String              @default("IDR")
-  timezone     String              @default("Asia/Jakarta")
-  users        User[]
-  jobs         BackgroundJob[]
-  auditLogs    AuditLog[]
-  integrations SourceIntegration[]
-  advertisers  Advertiser[]
+  id            String              @id @default(cuid())
+  name          String
+  locale        String              @default("id-ID")
+  currency      String              @default("IDR")
+  timezone      String              @default("Asia/Jakarta")
+  users         User[]
+  jobs          BackgroundJob[]
+  auditLogs     AuditLog[]
+  integrations  SourceIntegration[]
+  advertisers   Advertiser[]
   competitorAds CompetitorAd[]
-  adScans      AdScan[]
+  adScans       AdScan[]
   opportunities Opportunity[]
-  createdAt    DateTime            @default(now())
-  updatedAt    DateTime            @updatedAt
+  createdAt     DateTime            @default(now())
+  updatedAt     DateTime            @updatedAt
 }
 
 model User {
@@ -99,6 +99,7 @@ model SourceIntegration {
 
   @@unique([workspaceId, source])
 }
+
 enum ScanStatus {
   queued
   running
@@ -109,6 +110,13 @@ enum ScanStatus {
   partial
   failed
   cancelled
+}
+
+enum InsightStatus {
+  queued
+  running
+  succeeded
+  failed
 }
 
 enum OpportunityStatus {
@@ -125,19 +133,19 @@ enum OpportunityStatus {
 }
 
 model Advertiser {
-  id          String          @id @default(cuid())
+  id          String         @id @default(cuid())
   workspaceId String
-  workspace   Workspace       @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  workspace   Workspace      @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   source      String
   externalId  String?
   name        String
   pageUrl     String?
-  isWatched   Boolean         @default(false)
-  tags        String[]        @default([])
+  isWatched   Boolean        @default(false)
+  tags        String[]       @default([])
   notes       String?
   ads         CompetitorAd[]
-  createdAt   DateTime        @default(now())
-  updatedAt   DateTime        @updatedAt
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
 
   @@unique([workspaceId, source, name])
   @@index([workspaceId, isWatched])
@@ -155,16 +163,16 @@ model CompetitorAd {
   contentFingerprint String
   body               String
   headline           String?
-  cta                 String?
-  landingPageUrl      String?
+  cta                String?
+  landingPageUrl     String?
   startedRunningAt   DateTime?
-  isWatched           Boolean               @default(false)
-  tags                String[]              @default([])
-  notes               String?
-  observations        AdObservation[]
-  evidence            OpportunityEvidence[]
-  createdAt           DateTime              @default(now())
-  updatedAt           DateTime              @updatedAt
+  isWatched          Boolean               @default(false)
+  tags               String[]              @default([])
+  notes              String?
+  observations       AdObservation[]
+  evidence           OpportunityEvidence[]
+  createdAt          DateTime              @default(now())
+  updatedAt          DateTime              @updatedAt
 
   @@unique([workspaceId, canonicalKey])
   @@index([workspaceId, sourceAdId])
@@ -172,13 +180,13 @@ model CompetitorAd {
 }
 
 model AdScan {
-  id           String          @id @default(cuid())
-  workspaceId  String
-  workspace    Workspace       @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  keyword      String
-  country      String          @default("ID")
-  method       String
-  status       ScanStatus      @default(queued)
+  id                  String          @id @default(cuid())
+  workspaceId         String
+  workspace           Workspace       @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  keyword             String
+  country             String          @default("ID")
+  method              String
+  status              ScanStatus      @default(queued)
   resultCount         Int             @default(0)
   targetCount         Int             @default(100)
   discoveredCount     Int             @default(0)
@@ -191,74 +199,101 @@ model AdScan {
   progressMessage     String?
   stopRequestedAt     DateTime?
   summaryStartedAt    DateTime?
-  errorCode    String?
-  errorMessage String?
-  startedAt    DateTime?
-  finishedAt   DateTime?
-  createdAt    DateTime        @default(now())
-  observations AdObservation[]
+  errorCode           String?
+  errorMessage        String?
+  startedAt           DateTime?
+  finishedAt          DateTime?
+  createdAt           DateTime        @default(now())
+  observations        AdObservation[]
+  insight             ScanInsight?
 
   @@index([workspaceId, createdAt])
 }
 
 model AdObservation {
-  id           String       @id @default(cuid())
-  scanId       String
-  scan         AdScan       @relation(fields: [scanId], references: [id], onDelete: Cascade)
+  id             String       @id @default(cuid())
+  scanId         String
+  scan           AdScan       @relation(fields: [scanId], references: [id], onDelete: Cascade)
   competitorAdId String
-  competitorAd CompetitorAd @relation(fields: [competitorAdId], references: [id], onDelete: Cascade)
-  observedAt   DateTime
-  isActive     Boolean?
-  platforms    String[]     @default([])
+  competitorAd   CompetitorAd @relation(fields: [competitorAdId], references: [id], onDelete: Cascade)
+  observedAt     DateTime
+  isActive       Boolean?
+  platforms      String[]     @default([])
   duplicateCount Int?
-  raw          Json?
-  createdAt    DateTime     @default(now())
+  raw            Json?
+  createdAt      DateTime     @default(now())
 
   @@unique([scanId, competitorAdId])
   @@index([competitorAdId, observedAt])
 }
 
+model ScanInsight {
+  id                String        @id @default(cuid())
+  scanId            String        @unique
+  scan              AdScan        @relation(fields: [scanId], references: [id], onDelete: Cascade)
+  status            InsightStatus @default(queued)
+  model             String        @default("deepseek-v4-flash")
+  schemaVersion     String        @default("meta-insight-v1")
+  executiveSummary  String?
+  marketVerdict     String?
+  confidence        Int           @default(0)
+  productTrends     Json?
+  duplicateInsights Json?
+  winningAngles     Json?
+  recommendations   Json?
+  risks             Json?
+  rawResponse       Json?
+  errorCode         String?
+  errorMessage      String?
+  startedAt         DateTime?
+  finishedAt        DateTime?
+  createdAt         DateTime      @default(now())
+  updatedAt         DateTime      @updatedAt
+
+  @@index([status, createdAt])
+}
+
 model Opportunity {
-  id                   String                @id @default(cuid())
-  workspaceId          String
-  workspace            Workspace             @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  name                 String
-  status               OpportunityStatus     @default(discovered)
-  score                Int
-  confidence           Int
-  scoreVersion         String                @default("phase2-v1")
-  assumptions          String?
-  risks                String?
-  nextAction           String
-  evidence             OpportunityEvidence[]
-  decisions            DecisionLog[]
-  createdAt            DateTime              @default(now())
-  updatedAt            DateTime              @updatedAt
+  id           String                @id @default(cuid())
+  workspaceId  String
+  workspace    Workspace             @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  name         String
+  status       OpportunityStatus     @default(discovered)
+  score        Int
+  confidence   Int
+  scoreVersion String                @default("phase2-v1")
+  assumptions  String?
+  risks        String?
+  nextAction   String
+  evidence     OpportunityEvidence[]
+  decisions    DecisionLog[]
+  createdAt    DateTime              @default(now())
+  updatedAt    DateTime              @updatedAt
 
   @@index([workspaceId, status])
 }
 
 model OpportunityEvidence {
-  id            String        @id @default(cuid())
-  opportunityId String
-  opportunity   Opportunity   @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
+  id             String       @id @default(cuid())
+  opportunityId  String
+  opportunity    Opportunity  @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
   competitorAdId String
-  competitorAd  CompetitorAd  @relation(fields: [competitorAdId], references: [id], onDelete: Restrict)
-  reason        String
-  createdAt     DateTime      @default(now())
+  competitorAd   CompetitorAd @relation(fields: [competitorAdId], references: [id], onDelete: Restrict)
+  reason         String
+  createdAt      DateTime     @default(now())
 
   @@unique([opportunityId, competitorAdId])
 }
 
 model DecisionLog {
-  id            String      @id @default(cuid())
+  id            String             @id @default(cuid())
   opportunityId String
-  opportunity   Opportunity @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
+  opportunity   Opportunity        @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
   fromStatus    OpportunityStatus?
   toStatus      OpportunityStatus
   reason        String
   actorId       String?
-  createdAt     DateTime    @default(now())
+  createdAt     DateTime           @default(now())
 
   @@index([opportunityId, createdAt])
 }

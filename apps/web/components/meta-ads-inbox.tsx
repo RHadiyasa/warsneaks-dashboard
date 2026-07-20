@@ -1,43 +1,64 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import AnimatedContent from "./AnimatedContent";
+import CountUp from "./CountUp";
+import SpotlightCard from "./SpotlightCard";
 
 type Observation = { id?: string; observedAt: string; isActive: boolean | null; platforms: string[]; duplicateCount: number | null };
 type Ad = { id: string; canonicalKey: string; sourceAdId: string | null; body: string; headline: string | null; cta: string | null; landingPageUrl: string | null; isWatched: boolean; tags: string[]; notes: string | null; advertiser?: { id: string; name: string; isWatched: boolean }; advertiserName?: string; observations: Observation[] };
-type Scan = { id: string; keyword: string; country?: string; method?: string; status: string; resultCount: number; targetCount?: number; discoveredCount?: number; scrollCount?: number; duplicateAdsCount?: number; duplicateGroupCount?: number; totalInstances?: number; highDuplicateCount?: number; advertiserCount?: number; progressMessage?: string | null; stopRequestedAt?: string | null; errorCode?: string | null; errorMessage?: string | null; createdAt?: string; startedAt?: string | null; finishedAt?: string | null; job?: { status: string; attempts: number } | null };
+type InsightState = { status: string; model?: string; errorCode?: string | null; errorMessage?: string | null };
+type Scan = { id: string; keyword: string; country?: string; method?: string; status: string; resultCount: number; targetCount?: number; discoveredCount?: number; scrollCount?: number; progressMessage?: string | null; errorCode?: string | null; errorMessage?: string | null; insight?: InsightState | null; analysisJob?: { status: string; attempts: number } | null };
 type Opportunity = { id: string; name: string; status: string; score: number; confidence: number; nextAction: string };
 type DuplicateGroup = { fingerprint: string; advertiserName: string; instanceCount: number; headline: string | null; body: string; ads: { id: string; sourceAdId: string | null }[] };
 type ScanSummary = { scanId: string; keyword: string; country: string; resultCount: number; duplicateAdsCount: number; duplicateGroupCount: number; totalInstances: number; highDuplicateCount: number; advertiserCount: number; groups: DuplicateGroup[] };
-type Inbox = { ads: Ad[]; scans: Scan[]; opportunities: Opportunity[]; scanSummary?: ScanSummary | null };
+type Inbox = { ads: Ad[]; scans: Scan[]; opportunities: Opportunity[]; scanSummary?: ScanSummary | null; latestInsight?: unknown };
 type ModalState = { open: boolean; scan: Scan | null; keyword: string; country: string; targetCount: number; timedOut: boolean };
+type ProductTrend = { product: string; category: string; signal: "dominant_current_scan" | "emerging" | "rising" | "stable" | "declining"; score: number; confidence: number; adCount: number; advertiserCount: number; why: string; evidenceLibraryIds: string[] };
+type DuplicateInsight = { clusterName: string; instanceCount: number; advertiserNames: string[]; interpretation: string; evidenceLibraryIds: string[] };
+type WinningAngle = { angle: string; frequency: number; explanation: string; exampleLibraryIds: string[] };
+type Recommendation = { priority: "high" | "medium" | "low"; action: string; rationale: string; evidence: string[] };
+type Risk = { risk: string; explanation: string };
+type InsightRecord = { scanId: string; status: string; model: string; executiveSummary?: string | null; marketVerdict?: string | null; confidence: number; productTrends?: ProductTrend[] | null; duplicateInsights?: DuplicateInsight[] | null; winningAngles?: WinningAngle[] | null; recommendations?: Recommendation[] | null; risks?: Risk[] | null; errorCode?: string | null; errorMessage?: string | null };
 
-const demoImport = JSON.stringify({ ads: [{ libraryId: "DEMO-MANUAL-01", pageName: "Manual Demo Store", body: "Sneakers ringan untuk aktivitas harian", headline: "Nyaman setiap langkah", cta: "SHOP_NOW", destinationUrl: "https://example.invalid/manual", isActive: true, platforms: ["facebook", "instagram"], duplicateCount: 3 }] }, null, 2);
-const regions: Record<string,string> = { ID: "Indonesia", MY: "Malaysia", SG: "Singapura", PH: "Filipina", TH: "Thailand", VN: "Vietnam", US: "Amerika Serikat" };
+const regions: Record<string, string> = { ID: "Indonesia", MY: "Malaysia", SG: "Singapura", PH: "Filipina", TH: "Thailand", VN: "Vietnam", US: "Amerika Serikat" };
 const terminal = new Set(["succeeded", "partial", "failed", "cancelled"]);
+const insightTerminal = new Set(["succeeded", "failed"]);
 const wait = (milliseconds: number) => new Promise(resolve => setTimeout(resolve, milliseconds));
+const demoImport = JSON.stringify({ ads: [{ libraryId: "DEMO-MANUAL-01", pageName: "Manual Demo Store", body: "Sneakers ringan untuk aktivitas harian", headline: "Nyaman setiap langkah", cta: "SHOP_NOW", destinationUrl: "https://example.invalid/manual", isActive: true, platforms: ["facebook", "instagram"], duplicateCount: 3 }] }, null, 2);
+const verdictLabel: Record<string, string> = { strong_opportunity: "Peluang kuat", watch: "Pantau", insufficient_evidence: "Evidence terbatas", avoid: "Hindari sementara" };
+const signalLabel: Record<ProductTrend["signal"], string> = { dominant_current_scan: "Dominan di scan ini", emerging: "Mulai muncul", rising: "Sedang naik", stable: "Stabil", declining: "Menurun" };
 
 export default function MetaAdsInbox({ initial }: { initial: Inbox }) {
   const [data, setData] = useState(initial);
   const [keyword, setKeyword] = useState("sepatu sneakers pria");
   const [country, setCountry] = useState("ID");
-  const [method, setMethod] = useState("playwright");
   const [targetCount, setTargetCount] = useState(100);
+  const [method, setMethod] = useState("playwright");
   const [json, setJson] = useState(demoImport);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [showAds, setShowAds] = useState(false);
   const [query, setQuery] = useState("");
   const [watchedOnly, setWatchedOnly] = useState(false);
-  const [selected, setSelected] = useState<string[]>([]);
   const [active, setActive] = useState<Ad | null>(data.ads[0] || null);
-  const [oppName, setOppName] = useState("Peluang sneakers harian");
   const [modal, setModal] = useState<ModalState>({ open: false, scan: null, keyword: "", country: "ID", targetCount: 100, timedOut: false });
+  const insight = (data.latestInsight || null) as InsightRecord | null;
+  const summary = data.scanSummary || null;
 
   const filtered = useMemo(() => data.ads.filter(ad => (!watchedOnly || ad.isWatched) && `${ad.advertiser?.name || ad.advertiserName} ${ad.headline} ${ad.body}`.toLowerCase().includes(query.toLowerCase())), [data.ads, query, watchedOnly]);
+  const trends = useMemo(() => [...(insight?.productTrends || [])].sort((a, b) => b.score - a.score), [insight]);
 
   async function refresh() {
     const response = await fetch("/api/meta-ads/scans", { cache: "no-store" });
     if (response.ok) setData(await response.json());
   }
+
+  useEffect(() => {
+    if (!insight || !["queued", "running"].includes(insight.status)) return;
+    const timer = window.setInterval(() => void refresh(), 2500);
+    return () => window.clearInterval(timer);
+  }, [insight?.status]);
 
   async function pollScan(scanId: string) {
     for (let attempt = 0; attempt < 240; attempt += 1) {
@@ -45,10 +66,9 @@ export default function MetaAdsInbox({ initial }: { initial: Inbox }) {
       if (!response.ok) throw new Error("SCAN_STATUS_UNAVAILABLE");
       const current: Scan = await response.json();
       setModal(value => ({ ...value, scan: current }));
-      if (terminal.has(current.status)) {
-        await refresh();
-        return current;
-      }
+      const scanFinished = terminal.has(current.status);
+      const analysisPending = scanFinished && current.resultCount > 0 && (!current.insight || ["queued", "running"].includes(current.insight.status));
+      if (scanFinished && !analysisPending) { await refresh(); return current; }
       await wait(1500);
     }
     setModal(value => ({ ...value, timedOut: true }));
@@ -67,23 +87,30 @@ export default function MetaAdsInbox({ initial }: { initial: Inbox }) {
       if (!response.ok) throw new Error(created.code || "SCAN_FAILED");
       setModal(value => ({ ...value, scan: created }));
       const finished = method === "playwright" && !terminal.has(created.status) ? await pollScan(created.id) : created;
-      if (finished.status === "failed" || finished.status === "partial") setError(`Scan ${finished.status}: ${finished.errorCode || "UNKNOWN_ERROR"}. Existing data tetap tersedia.`);
+      if (["failed", "partial"].includes(finished.status)) setError(`Scan ${finished.status}: ${finished.errorCode || "UNKNOWN_ERROR"}. Evidence lama tetap aman.`);
       await refresh();
     } catch (reason) {
       const message = reason instanceof Error ? reason.message : "SCAN_FAILED";
       setError(message);
-      setModal(value => ({ ...value, scan: value.scan ? { ...value.scan, status: "failed", errorCode: message } : { id: "local-error", keyword: value.keyword, status: "failed", resultCount: 0, errorCode: message } }));
-    } finally {
-      setBusy(false);
-    }
+      setModal(value => ({ ...value, scan: value.scan ? { ...value.scan, status: "failed", errorCode: message } : { id: "local-error", keyword: value.keyword, country: value.country, status: "failed", resultCount: 0, errorCode: message } }));
+    } finally { setBusy(false); }
   }
 
   async function stopScan(scanId: string) {
     const response = await fetch(`/api/meta-ads/scans/${scanId}/stop`, { method: "POST" });
-    if (!response.ok) { setError("Permintaan stop gagal dikirim."); return; }
+    if (!response.ok) return setError("Permintaan stop gagal dikirim.");
     const stopped: Scan = await response.json();
     setModal(value => ({ ...value, scan: { ...(value.scan || stopped), ...stopped } }));
   }
+
+  async function retryInsight() {
+    if (!summary) return;
+    setError("");
+    const response = await fetch(`/api/meta-ads/scans/${summary.scanId}/analyze`, { method: "POST" });
+    if (!response.ok) return setError("Analisis DeepSeek gagal dijadwalkan ulang.");
+    await refresh();
+  }
+
   async function patchAd(ad: Ad, patch: Partial<Pick<Ad, "isWatched" | "tags" | "notes">>) {
     const response = await fetch(`/api/meta-ads/ads/${ad.id}`, { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify(patch) });
     if (response.ok) { await refresh(); setActive({ ...ad, ...patch }); }
@@ -95,41 +122,65 @@ export default function MetaAdsInbox({ initial }: { initial: Inbox }) {
     if (response.ok) { await refresh(); setActive({ ...ad, advertiser: { ...ad.advertiser, isWatched: !ad.advertiser.isWatched } }); }
   }
 
-  async function createOpportunity() {
-    if (!selected.length) return setError("Pilih minimal satu ad evidence.");
-    setBusy(true);
-    const response = await fetch("/api/opportunities", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name: oppName, adIds: selected, reason: "Evidence dari hasil Meta Ads scan", nextAction: "Validasi unit economics dan minta supplier quote" }) });
-    if (response.ok) { setSelected([]); await refresh(); } else setError("Opportunity gagal dibuat.");
-    setBusy(false);
-  }
+  return <main className="mi-page">
+    <header className="mi-header"><div><a href="/dashboard" className="mi-back">← Command Center</a><div className="mi-kicker"><span className="mi-live-dot" /> MARKET INTELLIGENCE · DEEPSEEK FLASH</div><h1>Keputusan pasar, <span>bukan tumpukan data.</span></h1><p>WarSneaks mengumpulkan evidence Meta Ads lalu DeepSeek merangkumnya menjadi produk, pola, dan tindakan.</p></div><button className="mi-outline-button" onClick={() => setShowAds(true)}>Lihat semua iklan <b>{data.ads.length}</b></button></header>
 
-  return <div className="spy-page">
-    <div className="spy-top"><div><a href="/dashboard" className="back">← Command Center</a><p className="eyebrow">INTELLIGENCE / META ADS SPY</p><h1>Evidence inbox</h1><p className="muted">Scan, simpan evidence, lalu ubah sinyal menjadi keputusan.</p></div><div className="scan-status"><b>{data.ads.length}</b><span>canonical ads</span><b>{data.scans.length}</b><span>scans</span></div></div>
-    <section className="scan-card"><label>Keyword<input value={keyword} onChange={event => setKeyword(event.target.value)} /></label><label>Region<select value={country} onChange={event => setCountry(event.target.value)}>{Object.entries(regions).map(([code,name]) => <option value={code} key={code}>{name}</option>)}</select></label><label>Kategori<select value="all" disabled aria-label="Kategori iklan"><option value="all">All ads</option></select></label><label>Target iklan<input type="number" min="10" max="500" value={targetCount} onChange={event => setTargetCount(Math.min(500, Math.max(10, Number(event.target.value) || 10)))} /></label><label>Metode<select value={method} onChange={event => setMethod(event.target.value)}><option value="fixture">Fixture regression</option><option value="manual">JSON import</option><option value="playwright">Playwright live</option></select></label><button className="primary" onClick={scan} disabled={busy || keyword.length < 2}>{busy ? "Memproses…" : "Jalankan scan"}</button>{method === "manual" && <textarea value={json} onChange={event => setJson(event.target.value)} aria-label="JSON import" />}</section>
-    {error && <div className="scan-error">{error}</div>}    {data.scanSummary && <section className="scan-summary"><div className="scan-summary-head"><div><p className="eyebrow">HASIL SCAN TERAKHIR</p><h2>{data.scanSummary.keyword}</h2><small>{regions[data.scanSummary.country] || data.scanSummary.country} · All ads</small></div></div><div className="scan-summary-metrics"><article><span>Iklan terkumpul</span><b>{data.scanSummary.resultCount}</b></article><article><span>Iklan duplikat</span><b>{data.scanSummary.duplicateAdsCount}</b></article><article><span>Grup duplikat</span><b>{data.scanSummary.duplicateGroupCount}</b></article><article><span>High duplicate</span><b>{data.scanSummary.highDuplicateCount}</b></article><article><span>Advertiser</span><b>{data.scanSummary.advertiserCount}</b></article></div>{data.scanSummary.groups.length > 0 && <div className="duplicate-groups"><h3>Konten dengan Library ID berbeda</h3>{data.scanSummary.groups.map((group,index) => <article key={group.fingerprint}><span>{index + 1}</span><div><strong>{group.advertiserName}</strong><p>{group.headline || group.body || "Konten tanpa headline"}</p><small>{group.ads.map(ad => ad.sourceAdId).filter(Boolean).join(" · ")}</small></div><b>{group.instanceCount}× duplikat</b></article>)}</div>}</section>}
-    <div className="spy-grid"><section className="inbox"><div className="inbox-tools"><input placeholder="Cari advertiser, headline, atau teks…" value={query} onChange={event => setQuery(event.target.value)} /><label><input type="checkbox" checked={watchedOnly} onChange={event => setWatchedOnly(event.target.checked)} /> Watchlist saja</label></div>{filtered.length === 0 ? <div className="empty"><h2>Belum ada evidence</h2><p>Jalankan fixture scan atau import JSON extension.</p></div> : filtered.map(ad => <article className={`ad-row ${active?.id === ad.id ? "selected" : ""}`} key={ad.id} onClick={() => setActive(ad)}><input type="checkbox" checked={selected.includes(ad.id)} onClick={event => event.stopPropagation()} onChange={event => setSelected(value => event.target.checked ? [...value, ad.id] : value.filter(id => id !== ad.id))} /><div className="ad-copy"><div><strong>{ad.advertiser?.name || ad.advertiserName}</strong><span>{ad.sourceAdId || "fingerprint identity"}</span></div><h3>{ad.headline || "Tanpa headline"}</h3><p>{ad.body}</p><small>{ad.observations.length} observation · {ad.observations[0]?.platforms.join(", ") || "platform tidak tersedia"}</small></div><button className={ad.isWatched ? "watching" : ""} onClick={event => { event.stopPropagation(); void patchAd(ad, { isWatched: !ad.isWatched }); }}>{ad.isWatched ? "★" : "☆"}</button></article>)}</section>
-      <aside className="detail">{active ? <><p className="eyebrow">AD DETAIL</p>{active.advertiser && <button className="advertiser-watch" onClick={() => void watchAdvertiser(active)}>{active.advertiser.isWatched ? "★ Advertiser watched" : "☆ Watch advertiser"}</button>}<h2>{active.headline || "Tanpa headline"}</h2><p>{active.body || "Primary text tidak tersedia."}</p>{active.landingPageUrl && <a href={active.landingPageUrl} target="_blank" rel="noreferrer">Landing page ↗</a>}<dl><dt>Stable identity</dt><dd>{active.canonicalKey}</dd><dt>Observations</dt><dd>{active.observations.length}</dd></dl><label>Tags<input defaultValue={active.tags.join(", ")} onBlur={event => void patchAd(active, { tags: event.target.value.split(",").map(value => value.trim()).filter(Boolean) })} /></label><label>Notes<textarea defaultValue={active.notes || ""} onBlur={event => void patchAd(active, { notes: event.target.value })} /></label><h3>Observation history</h3>{active.observations.map((observation, index) => <div className="observation" key={observation.id || `${observation.observedAt}-${index}`}><span className={observation.isActive ? "live" : ""} /><div><strong>{new Date(observation.observedAt).toLocaleString("id-ID", { timeZone: "Asia/Jakarta" })}</strong><small>{observation.platforms.join(", ") || "Platform tidak tersedia"} · reuse signal {observation.duplicateCount ?? "—"}</small></div></div>)}</> : <p>Pilih ad untuk melihat detail.</p>}</aside></div>
-    <section className="opportunity-bar"><div><p className="eyebrow">DECISION WORKFLOW</p><h2>Buat opportunity dari evidence</h2><p>{selected.length} ad dipilih</p></div><input value={oppName} onChange={event => setOppName(event.target.value)} aria-label="Opportunity name" /><button className="primary" onClick={createOpportunity} disabled={busy || !selected.length}>Simpan opportunity</button></section>
-    <section className="opportunity-list"><h2>Opportunity inbox</h2>{data.opportunities.length ? data.opportunities.map(opportunity => <article key={opportunity.id}><div><strong>{opportunity.name}</strong><p>{opportunity.nextAction}</p></div><span>{opportunity.status}</span><b>{opportunity.score}<small>/100 score</small></b><b>{opportunity.confidence}<small>/100 confidence</small></b></article>) : <p className="muted">Belum ada opportunity tersimpan.</p>}</section>
-    <section className="scan-history"><h2>Scan history</h2>{data.scans.map(item => <div key={item.id}><strong>{item.keyword}</strong><span className={item.status}>{item.status}</span><small>{item.resultCount} results · {regions[item.country || "ID"] || item.country} · All ads {item.errorCode && `· ${item.errorCode}`}</small></div>)}</section>
+    <section className="mi-scan-bar"><label className="mi-keyword"><span>Keyword</span><input value={keyword} onChange={event => setKeyword(event.target.value)} placeholder="Contoh: gamis wanita" /></label><label><span>Region</span><select value={country} onChange={event => setCountry(event.target.value)}>{Object.entries(regions).map(([code, name]) => <option value={code} key={code}>{name}</option>)}</select></label><label><span>Kategori</span><select value="all" disabled><option value="all">All ads</option></select></label><label><span>Target iklan</span><input type="number" min="10" max="500" value={targetCount} onChange={event => setTargetCount(Math.min(500, Math.max(10, Number(event.target.value) || 10)))} /></label><label><span>Metode</span><select value={method} onChange={event => setMethod(event.target.value)}><option value="playwright">Playwright live</option><option value="fixture">Fixture regression</option><option value="manual">JSON import</option></select></label><button className="mi-primary-button" onClick={scan} disabled={busy || keyword.length < 2}>{busy ? "Berjalan…" : "Mulai analisis"}</button>{method === "manual" && <textarea value={json} onChange={event => setJson(event.target.value)} aria-label="JSON import" />}</section>
+    {error && <div className="mi-error">{error}</div>}
+
+    {!summary ? <EmptyInsight onScan={scan} /> : <>
+      <AnimatedContent distance={28} duration={0.55}><SpotlightCard className="mi-ai-hero" spotlightColor="rgba(97, 94, 252, 0.16)"><div className="mi-ai-badge"><span>✦</span> DEEPSEEK MARKET BRIEF</div>{insight?.status === "succeeded" ? <><div className="mi-verdict-row"><span className={`mi-verdict ${insight.marketVerdict}`}>{verdictLabel[insight.marketVerdict || ""] || insight.marketVerdict}</span><span>{insight.confidence}% confidence</span><span>{summary.resultCount} ads · {summary.advertiserCount} advertiser</span></div><h2>{insight.executiveSummary}</h2><div className="mi-hero-meta"><span>Keyword <b>{summary.keyword}</b></span><span>Region <b>{regions[summary.country] || summary.country}</b></span><span>Model <b>{insight.model}</b></span></div></> : <InsightPending insight={insight} onRetry={retryInsight} />}</SpotlightCard></AnimatedContent>
+
+      <section className="mi-metrics"><Metric label="Iklan dianalisis" value={summary.resultCount} note="Library ID unik" /><Metric label="Konten duplikat" value={summary.duplicateAdsCount} note={`${summary.duplicateGroupCount} kelompok creative`} /><Metric label="High duplicate" value={summary.highDuplicateCount} note="Minimal 5 instance" /><Metric label="Advertiser" value={summary.advertiserCount} note="Sumber evidence unik" /></section>
+
+      <section className="mi-section"><div className="mi-section-head"><div><p className="mi-eyebrow">PRODUCT SIGNALS</p><h2>Produk yang patut diperhatikan</h2><p>DeepSeek menggabungkan variasi nama produk dan menilai kekuatan signal dari seluruh evidence.</p></div><span className="mi-section-count">{trends.length} signal</span></div>{trends.length ? <div className="mi-trend-grid">{trends.map((trend, index) => <AnimatedContent key={`${trend.product}-${index}`} delay={Math.min(index * .05, .3)} distance={20}><article className="mi-trend-card"><div className="mi-trend-top"><span className={`mi-signal ${trend.signal}`}>{signalLabel[trend.signal]}</span><b>{trend.score}</b></div><p className="mi-category">{trend.category}</p><h3>{trend.product}</h3><p>{trend.why}</p><div className="mi-card-stats"><span><b>{trend.adCount}</b> ads</span><span><b>{trend.advertiserCount}</b> advertiser</span><span><b>{trend.confidence}%</b> confidence</span></div><small>Evidence: {trend.evidenceLibraryIds.slice(0, 4).join(" · ") || "tersimpan pada scan"}</small></article></AnimatedContent>)}</div> : <InsightSkeleton label="Signal produk akan tampil setelah analisis DeepSeek selesai." />}</section>
+
+      <div className="mi-insight-grid"><section className="mi-section mi-duplicates"><div className="mi-section-head"><div><p className="mi-eyebrow">CREATIVE REUSE</p><h2>Iklan yang terdeteksi duplikat</h2></div></div>{(insight?.duplicateInsights || []).length ? <div className="mi-duplicate-list">{insight!.duplicateInsights!.map((item, index) => <article key={`${item.clusterName}-${index}`}><span className="mi-rank">{String(index + 1).padStart(2, "0")}</span><div><h3>{item.clusterName}</h3><p>{item.interpretation}</p><small>{item.advertiserNames.join(" · ")} · {item.evidenceLibraryIds.slice(0, 4).join(" · ")}</small></div><b>{item.instanceCount}×</b></article>)}</div> : summary.groups.length ? <div className="mi-duplicate-list">{summary.groups.slice(0, 6).map((group, index) => <article key={group.fingerprint}><span className="mi-rank">{String(index + 1).padStart(2, "0")}</span><div><h3>{group.headline || group.advertiserName}</h3><p>{group.body}</p><small>{group.advertiserName} · {group.ads.map(ad => ad.sourceAdId).filter(Boolean).slice(0, 4).join(" · ")}</small></div><b>{group.instanceCount}×</b></article>)}</div> : <div className="mi-empty-inline">Tidak ada creative dengan fingerprint identik pada scan ini.</div>}</section>
+
+        <section className="mi-section mi-actions"><div className="mi-section-head"><div><p className="mi-eyebrow">NEXT BEST ACTION</p><h2>Apa yang sebaiknya dilakukan?</h2></div></div>{(insight?.recommendations || []).length ? <div className="mi-action-list">{insight!.recommendations!.map((item, index) => <article key={`${item.action}-${index}`}><span className={`mi-priority ${item.priority}`}>{item.priority}</span><div><h3>{item.action}</h3><p>{item.rationale}</p><small>{item.evidence.join(" · ")}</small></div></article>)}</div> : <InsightSkeleton label="Rekomendasi akan tampil setelah analisis selesai." />}</section></div>
+
+      <div className="mi-insight-grid"><section className="mi-section"><div className="mi-section-head"><div><p className="mi-eyebrow">WINNING ANGLES</p><h2>Pola pesan yang berulang</h2></div></div><div className="mi-angle-list">{(insight?.winningAngles || []).map((item, index) => <article key={`${item.angle}-${index}`}><span>{item.frequency}×</span><div><h3>{item.angle}</h3><p>{item.explanation}</p></div></article>)}</div>{!(insight?.winningAngles || []).length && <InsightSkeleton label="Angle pemasaran sedang dirangkum." />}</section><section className="mi-section"><div className="mi-section-head"><div><p className="mi-eyebrow">RISKS & CAVEATS</p><h2>Yang perlu divalidasi</h2></div></div><div className="mi-risk-list">{(insight?.risks || []).map((item, index) => <article key={`${item.risk}-${index}`}><span>!</span><div><h3>{item.risk}</h3><p>{item.explanation}</p></div></article>)}</div>{!(insight?.risks || []).length && <InsightSkeleton label="Risk notes sedang disiapkan." />}</section></div>
+
+      <section className="mi-evidence-cta"><div><p className="mi-eyebrow">AUDITABLE EVIDENCE</p><h2>Kesimpulan sudah siap. Data mentah tetap tersedia.</h2><p>Buka evidence hanya ketika Anda ingin memverifikasi Library ID, copy, CTA, atau landing page tertentu.</p></div><button className="mi-dark-button" onClick={() => setShowAds(true)}>Lihat semua iklan <span>→</span></button></section>
+    </>}
+
+    <section className="mi-history"><div className="mi-section-head"><div><p className="mi-eyebrow">SCAN HISTORY</p><h2>Analisis sebelumnya</h2></div></div>{data.scans.slice(0, 6).map(item => <article key={item.id}><div><strong>{item.keyword}</strong><small>{regions[item.country || "ID"] || item.country} · {item.resultCount} ads</small></div><span className={item.status}>{item.status.replace("_", " ")}</span></article>)}</section>
+
+    {showAds && <AdsDrawer ads={filtered} allCount={data.ads.length} active={active} query={query} watchedOnly={watchedOnly} onQuery={setQuery} onWatchedOnly={setWatchedOnly} onSelect={setActive} onClose={() => setShowAds(false)} onPatch={patchAd} onWatchAdvertiser={watchAdvertiser} />}
     {modal.open && <ScanProgressModal state={modal} onStop={stopScan} onClose={() => setModal(value => ({ ...value, open: false }))} />}
-  </div>;
+  </main>;
+}
+
+function Metric({ label, value, note }: { label: string; value: number; note: string }) {
+  return <SpotlightCard className="mi-metric" spotlightColor="rgba(97, 94, 252, 0.10)"><span>{label}</span><CountUp to={value} duration={1.2} separator="." /><small>{note}</small></SpotlightCard>;
+}
+
+function EmptyInsight({ onScan }: { onScan: () => Promise<void> }) {
+  return <section className="mi-empty-insight"><span>✦</span><h2>Belum ada market brief</h2><p>Jalankan satu scan. DeepSeek akan membaca seluruh evidence dan mengubahnya menjadi kesimpulan.</p><button className="mi-primary-button" onClick={() => void onScan()}>Mulai scan pertama</button></section>;
+}
+
+function InsightPending({ insight, onRetry }: { insight: InsightRecord | null; onRetry: () => Promise<void> }) {
+  if (insight?.status === "failed") return <div className="mi-insight-failed"><h2>Evidence tersimpan, tetapi analisis AI belum selesai.</h2><p>{insight.errorCode || "DEEPSEEK_ANALYSIS_FAILED"}. Anda dapat menjalankan analisis ulang tanpa scraping ulang.</p><button onClick={() => void onRetry()}>Analisis ulang</button></div>;
+  return <div className="mi-thinking"><span className="mi-thinking-orb">✦</span><div><h2>DeepSeek sedang membaca seluruh evidence…</h2><p>Mengelompokkan produk, creative duplikat, angle, risiko, dan rekomendasi.</p></div><span className="mi-loading-dots"><i /><i /><i /></span></div>;
+}
+
+function InsightSkeleton({ label }: { label: string }) { return <div className="mi-skeleton"><span /><span /><p>{label}</p></div>; }
+
+function AdsDrawer({ ads, allCount, active, query, watchedOnly, onQuery, onWatchedOnly, onSelect, onClose, onPatch, onWatchAdvertiser }: { ads: Ad[]; allCount: number; active: Ad | null; query: string; watchedOnly: boolean; onQuery: (value: string) => void; onWatchedOnly: (value: boolean) => void; onSelect: (ad: Ad) => void; onClose: () => void; onPatch: (ad: Ad, patch: Partial<Pick<Ad, "isWatched" | "tags" | "notes">>) => Promise<void>; onWatchAdvertiser: (ad: Ad) => Promise<void> }) {
+  useEffect(() => { const handler = (event: KeyboardEvent) => { if (event.key === "Escape") onClose(); }; window.addEventListener("keydown", handler); return () => window.removeEventListener("keydown", handler); }, [onClose]);
+  return <div className="mi-drawer-backdrop" role="presentation"><section className="mi-drawer" role="dialog" aria-modal="true" aria-label="Semua iklan"><header><div><p className="mi-eyebrow">RAW EVIDENCE</p><h2>Semua iklan <span>{allCount}</span></h2></div><button onClick={onClose} aria-label="Tutup">×</button></header><div className="mi-drawer-tools"><input placeholder="Cari advertiser, produk, atau copy…" value={query} onChange={event => onQuery(event.target.value)} /><label><input type="checkbox" checked={watchedOnly} onChange={event => onWatchedOnly(event.target.checked)} /> Watchlist</label></div><div className="mi-drawer-grid"><div className="mi-ad-list">{ads.map(ad => <article className={active?.id === ad.id ? "active" : ""} key={ad.id} onClick={() => onSelect(ad)}><div className="mi-ad-avatar">{(ad.advertiser?.name || ad.advertiserName || "?").charAt(0)}</div><div><div><strong>{ad.advertiser?.name || ad.advertiserName}</strong><small>{ad.sourceAdId || "fingerprint"}</small></div><h3>{ad.headline || "Tanpa headline"}</h3><p>{ad.body || "Primary text tidak tersedia."}</p><span>{ad.observations.length} observation · reuse {ad.observations[0]?.duplicateCount || 1}×</span></div></article>)}{!ads.length && <div className="mi-empty-inline">Tidak ada iklan yang sesuai filter.</div>}</div><aside className="mi-ad-detail">{active ? <><div className="mi-detail-brand"><div className="mi-detail-avatar">{(active.advertiser?.name || active.advertiserName || "?").charAt(0)}</div><div><span>Advertiser</span><h3>{active.advertiser?.name || active.advertiserName}</h3></div><button onClick={() => void onWatchAdvertiser(active)}>{active.advertiser?.isWatched ? "★" : "☆"}</button></div><div className="mi-detail-badges"><span className="active">Active</span><span>Library ID {active.sourceAdId || "—"}</span><span>{active.observations[0]?.duplicateCount || 1}× reuse</span></div><div className="mi-detail-copy"><span>Headline</span><h2>{active.headline || "Tanpa headline"}</h2><span>Primary text</span><p>{active.body || "Tidak tersedia."}</p>{active.cta && <div className="mi-detail-cta"><span>CTA</span><b>{active.cta}</b></div>}{active.landingPageUrl && <a href={active.landingPageUrl} target="_blank" rel="noreferrer">Buka landing page ↗</a>}</div><div className="mi-detail-fields"><label>Tags<input defaultValue={active.tags.join(", ")} onBlur={event => void onPatch(active, { tags: event.target.value.split(",").map(value => value.trim()).filter(Boolean) })} /></label><label>Catatan<textarea defaultValue={active.notes || ""} onBlur={event => void onPatch(active, { notes: event.target.value })} /></label></div><div className="mi-observation-history"><h3>Observation history</h3>{active.observations.map((observation, index) => <article key={observation.id || index}><span className={observation.isActive ? "live" : ""} /><div><strong>{new Date(observation.observedAt).toLocaleString("id-ID", { timeZone: "Asia/Jakarta" })}</strong><small>{observation.platforms.join(", ") || "Platform tidak tersedia"}</small></div></article>)}</div></> : <div className="mi-empty-inline">Pilih iklan untuk melihat detail.</div>}</aside></div></section></div>;
 }
 
 function ScanProgressModal({ state, onClose, onStop }: { state: ModalState; onClose: () => void; onStop: (scanId: string) => Promise<void> }) {
-  const status = state.scan?.status || "submitting";
-  const isTerminal = terminal.has(status);
+  const scanStatus = state.scan?.status || "submitting";
+  const aiStatus = state.scan?.insight?.status;
+  const displayStatus = terminal.has(scanStatus) && ["queued", "running"].includes(aiStatus || "") ? "analyzing" : scanStatus;
+  const scanFinished = terminal.has(scanStatus);
+  const isTerminal = scanFinished && (!aiStatus || insightTerminal.has(aiStatus));
   const discovered = state.scan?.discoveredCount || state.scan?.resultCount || 0;
   const target = state.scan?.targetCount || state.targetCount;
-  const progress = status === "submitting" ? 4 : status === "queued" ? 8 : status === "summarizing" ? 94 : isTerminal ? 100 : Math.min(90, Math.max(12, (discovered / target) * 90));
-  const stages = [
-    { key: "queued", label: "Job masuk antrean", detail: "Permintaan dan target disimpan secara durable di PostgreSQL." },
-    { key: "collecting", label: "Playwright mengumpulkan iklan", detail: "Auto-scroll memuat kartu baru dan menyimpan setiap batch." },
-    { key: "summarizing", label: "Merangkum duplikasi", detail: "Konten dikelompokkan berdasarkan advertiser, primary text, headline, dan CTA." },
-    { key: "succeeded", label: "Evidence tersimpan", detail: `${state.scan?.resultCount || 0} iklan selesai diproses.` }
-  ];
-  const reached = (key: string) => key === "queued" ? status !== "submitting" : key === "collecting" ? ["collecting", "running", "stop_requested", "summarizing", "succeeded", "partial", "failed"].includes(status) : key === "summarizing" ? ["summarizing", "succeeded", "partial"].includes(status) : ["succeeded", "partial"].includes(status);
-  const canStop = Boolean(state.scan?.id && !isTerminal && !["summarizing", "stop_requested"].includes(status));
+  const progress = displayStatus === "submitting" ? 4 : displayStatus === "queued" ? 8 : displayStatus === "summarizing" ? 82 : displayStatus === "analyzing" ? 94 : isTerminal ? 100 : Math.min(78, Math.max(12, (discovered / target) * 78));
+  const canStop = Boolean(state.scan?.id && !scanFinished && !["summarizing", "stop_requested"].includes(scanStatus));
   useEffect(() => { const handler = (event: KeyboardEvent) => { if (event.key === "Escape" && isTerminal) onClose(); }; window.addEventListener("keydown", handler); return () => window.removeEventListener("keydown", handler); }, [isTerminal, onClose]);
-  return <div className="scan-modal-backdrop" role="presentation"><section className="scan-modal" role="dialog" aria-modal="true" aria-labelledby="scan-modal-title" aria-live="polite"><div className="scan-modal-head"><div><p className="eyebrow">PLAYWRIGHT LIVE SCAN</p><h2 id="scan-modal-title">Mengambil evidence untuk “{state.keyword}”</h2></div><span className={`scan-modal-status ${status}`}>{status.replace("_", " ")}</span></div><p className="scan-filter-summary">{regions[state.country] || state.country} · All ads · Active ads</p><div className="live-scan-counter"><div><b>{discovered}</b><span>dari target {target} iklan</span></div><small>Auto-scroll {state.scan?.scrollCount || 0} · {state.scan?.progressMessage || "Menyiapkan browser"}</small></div><div className="scan-progress-track"><span style={{ width: `${progress}%` }} /></div><p className="scan-progress-caption">{status === "queued" ? "Menunggu worker tersedia…" : ["collecting", "running"].includes(status) ? "Jumlah akan terus bertambah saat halaman di-scroll otomatis." : status === "stop_requested" ? "Stop diterima. Menyelesaikan batch aktif sebelum merangkum…" : status === "summarizing" ? "Browser ditutup; data yang terkumpul sedang dirangkum…" : status === "succeeded" ? `Selesai — ${state.scan?.resultCount || 0} iklan tersimpan.` : status === "partial" ? "Selesai sebagian; evidence yang valid tetap disimpan." : status === "failed" ? "Scan gagal; data lama tetap aman." : "Mengirim permintaan scan…"}</p><div className="scan-stage-list">{stages.map((stage,index) => <div className={`scan-stage ${reached(stage.key) ? "done" : ""} ${stage.key === status ? "current" : ""}`} key={stage.key}><span>{reached(stage.key) ? "✓" : index + 1}</span><div><strong>{stage.label}</strong><p>{stage.detail}</p></div></div>)}</div>{(status === "failed" || status === "partial" || state.timedOut) && <div className="scan-modal-error"><strong>{state.timedOut ? "Pemantauan melewati batas waktu" : state.scan?.errorCode || "PARTIAL_SCAN"}</strong><p>{state.scan?.errorMessage || "Last-known-good evidence tidak dihapus."}</p></div>}<footer><small>Scan ID: {state.scan?.id || "menunggu…"}</small><div className="scan-modal-actions">{canStop && <button className="stop-scan" onClick={() => void onStop(state.scan!.id)}>Stop & rangkum</button>}{isTerminal ? <button className="primary" onClick={onClose}>Lihat hasil</button> : <button className="secondary" onClick={onClose}>Jalankan di background</button>}</div></footer></section></div>;
+  return <div className="mi-modal-backdrop"><section className="mi-scan-modal" role="dialog" aria-modal="true" aria-live="polite"><header><div><p className="mi-eyebrow">LIVE MARKET ANALYSIS</p><h2>“{state.keyword}”</h2></div><span className={displayStatus}>{displayStatus.replace("_", " ")}</span></header><div className="mi-modal-filter">{regions[state.country] || state.country} · All ads · Active ads</div><div className="mi-live-count live-scan-counter"><CountUp to={discovered} duration={.5} /><div><b>dari target {target}</b><small>Auto-scroll {state.scan?.scrollCount || 0}</small></div></div><div className="mi-progress"><span style={{ width: `${progress}%` }} /></div><div className="mi-modal-stages"><article className={scanStatus !== "submitting" ? "done" : "active"}><span>1</span><div><b>Antrean tersimpan</b><small>Job durable di PostgreSQL</small></div></article><article className={["collecting", "running", "stop_requested"].includes(scanStatus) ? "active" : scanFinished || ["summarizing"].includes(scanStatus) ? "done" : ""}><span>2</span><div><b>Playwright mengumpulkan iklan</b><small>{state.scan?.progressMessage || "Menyiapkan browser"}</small></div></article><article className={displayStatus === "summarizing" ? "active" : scanFinished ? "done" : ""}><span>3</span><div><b>Normalisasi evidence</b><small>Library ID dan duplicate fingerprint</small></div></article><article className={displayStatus === "analyzing" ? "active" : aiStatus === "succeeded" ? "done" : ""}><span>4</span><div><b>DeepSeek merangkum</b><small>Produk, angle, risiko, dan tindakan</small></div></article></div>{state.scan?.insight?.status === "failed" && <div className="mi-error">Evidence tersimpan, tetapi DeepSeek gagal: {state.scan.insight.errorCode}</div>}<footer><small>Scan ID · {state.scan?.id || "menunggu"}</small><div>{canStop && <button className="mi-stop-button" onClick={() => void onStop(state.scan!.id)}>Stop & rangkum</button>}{isTerminal ? <button className="mi-primary-button" onClick={onClose}>Lihat insight</button> : <button className="mi-ghost-button" onClick={onClose}>Jalankan di background</button>}</div></footer></section></div>;
 }

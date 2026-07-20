@@ -819,6 +819,11 @@ Turn market signals into durable evidence and business decisions.
 - [x] Create opportunity from one or multiple ads.
 - [x] Opportunity lifecycle and decision log.
 - [x] Basic evidence-based score and confidence.
+- [x] Durable `ScanInsight` model and independent `meta_ads.analyze_scan` job.
+- [x] Evidence-grounded DeepSeek Flash synthesis with strict JSON validation and retry.
+- [x] Insight-first market brief for product signals, duplicates, winning angles, actions, and risks.
+- [x] Raw-ad evidence drawer and redesigned advertiser/ad detail workspace.
+- [x] Plus Jakarta Sans and React Bits motion/metric/spotlight components.
 
 ### Acceptance gate
 
@@ -826,6 +831,8 @@ Turn market signals into durable evidence and business decisions.
 - [x] Failed scans do not erase existing data.
 - [x] User can move from scan result to a saved opportunity and next action.
 - [x] Scraper normalization has fixture-based regression tests.
+- [x] DeepSeek output is schema-validated, live-tested, and retryable without rerunning Playwright.
+- [x] API credentials are environment-only and absent from tracked source.
 
 ### Deferred
 

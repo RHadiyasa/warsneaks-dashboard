@@ -9,6 +9,8 @@ const dateOrNull = (value: string | null) => { if (!value) return null; const da
 const creativeKey = (ad: { advertiserName: string; body: string; headline: string | null; cta: string | null }) =>
   [ad.advertiserName, ad.body, ad.headline || "", ad.cta || ""].map(value => value.trim().replace(/\s+/g, " ").toLowerCase()).join("|");
 
+const serializeInsight = <T extends { startedAt: Date | null; finishedAt: Date | null; createdAt: Date; updatedAt: Date }>(insight: T | null | undefined) => insight ? { ...insight, startedAt: insight.startedAt?.toISOString() || null, finishedAt: insight.finishedAt?.toISOString() || null, createdAt: insight.createdAt.toISOString(), updatedAt: insight.updatedAt.toISOString() } : null;
+
 async function fixtureRows() {
   const text = await fs.readFile(path.join(process.cwd(), "fixtures/meta-ads/manual-import.sample.json"), "utf8");
   return parseManualImport(JSON.parse(text));
@@ -66,11 +68,11 @@ export async function runScan(input: { keyword: string; method: "fixture" | "man
 }
 
 export async function getInbox() {
-  if (!process.env.DATABASE_URL) return { ads: [...phase2Memory.ads.values()], scans: phase2Memory.scans, opportunities: phase2Memory.opportunities, scanSummary: null };
+  if (!process.env.DATABASE_URL) return { ads: [...phase2Memory.ads.values()], scans: phase2Memory.scans, opportunities: phase2Memory.opportunities, scanSummary: null, latestInsight: null };
   const { db } = await import("@warsneaks/db");
   const [ads, scans, opportunities] = await Promise.all([
     db.competitorAd.findMany({ where: { workspaceId }, include: { advertiser: true, observations: { orderBy: { observedAt: "desc" } } }, orderBy: { updatedAt: "desc" } }),
-    db.adScan.findMany({ where: { workspaceId }, orderBy: { createdAt: "desc" }, take: 10 }),
+    db.adScan.findMany({ where: { workspaceId }, include: { insight: true }, orderBy: { createdAt: "desc" }, take: 10 }),
     db.opportunity.findMany({ where: { workspaceId }, include: { evidence: true, decisions: { orderBy: { createdAt: "desc" } } }, orderBy: { createdAt: "desc" } })
   ]);
   const latest = scans.find(scan => scan.status === "succeeded" || scan.status === "partial");
@@ -95,9 +97,10 @@ export async function getInbox() {
   }
   return {
     ads: ads.map(ad => ({ ...ad, startedRunningAt: ad.startedRunningAt?.toISOString() || null, createdAt: ad.createdAt.toISOString(), updatedAt: ad.updatedAt.toISOString(), observations: ad.observations.map(o => ({ ...o, observedAt: o.observedAt.toISOString(), createdAt: o.createdAt.toISOString() })) })),
-    scans: scans.map(s => ({ ...s, createdAt: s.createdAt.toISOString(), startedAt: s.startedAt?.toISOString() || null, finishedAt: s.finishedAt?.toISOString() || null, stopRequestedAt: s.stopRequestedAt?.toISOString() || null, summaryStartedAt: s.summaryStartedAt?.toISOString() || null })),
+    scans: scans.map(s => ({ ...s, createdAt: s.createdAt.toISOString(), startedAt: s.startedAt?.toISOString() || null, finishedAt: s.finishedAt?.toISOString() || null, stopRequestedAt: s.stopRequestedAt?.toISOString() || null, summaryStartedAt: s.summaryStartedAt?.toISOString() || null, insight: serializeInsight(s.insight) })),
     opportunities: opportunities.map(o => ({ ...o, createdAt: o.createdAt.toISOString(), updatedAt: o.updatedAt.toISOString(), decisions: o.decisions.map(d => ({ ...d, createdAt: d.createdAt.toISOString() })) })),
-    scanSummary
+    scanSummary,
+    latestInsight: serializeInsight(latest?.insight || null)
   };
 }
 
@@ -135,9 +138,33 @@ export async function requestScanStop(id: string) {
 export async function getScanProgress(id: string) {
   if (!process.env.DATABASE_URL) { const scan = phase2Memory.scans.find(item => item.id === id); if (!scan) throw new Error("SCAN_NOT_FOUND"); return { ...scan, job: null }; }
   const { db } = await import("@warsneaks/db");
+  const scan = await db.adScan.findFirst({ where: { id, workspaceId }, include: { insight: true } });
+  if (!scan) throw new Error("SCAN_NOT_FOUND");
+  const [job, analysisJob] = await Promise.all([
+    db.backgroundJob.findFirst({ where: { workspaceId, type: "meta_ads.playwright_scan", payload: { path: ["scanId"], equals: id } }, orderBy: { createdAt: "desc" } }),
+    db.backgroundJob.findFirst({ where: { workspaceId, type: "meta_ads.analyze_scan", payload: { path: ["scanId"], equals: id } }, orderBy: { createdAt: "desc" } })
+  ]);
+  const effectiveStatus = scan.status === "queued" && job?.status === "running" ? "collecting" : scan.status === "queued" && job?.status === "failed" ? "failed" : scan.status;
+  return { ...scan, insight: scan.insight ? { ...scan.insight, startedAt: scan.insight.startedAt?.toISOString() || null, finishedAt: scan.insight.finishedAt?.toISOString() || null, createdAt: scan.insight.createdAt.toISOString(), updatedAt: scan.insight.updatedAt.toISOString() } : null, status: effectiveStatus, errorCode: scan.errorCode || job?.errorCode || null, createdAt: scan.createdAt.toISOString(), startedAt: (scan.startedAt || job?.startedAt)?.toISOString() || null, finishedAt: (scan.finishedAt || job?.finishedAt)?.toISOString() || null, stopRequestedAt: scan.stopRequestedAt?.toISOString() || null, summaryStartedAt: scan.summaryStartedAt?.toISOString() || null, job: job ? { id: job.id, status: job.status, attempts: job.attempts, createdAt: job.createdAt.toISOString(), startedAt: job.startedAt?.toISOString() || null, finishedAt: job.finishedAt?.toISOString() || null, errorCode: job.errorCode } : null, analysisJob: analysisJob ? { id: analysisJob.id, status: analysisJob.status, attempts: analysisJob.attempts, errorCode: analysisJob.errorCode } : null };
+}
+export async function requestScanAnalysis(id: string) {
+  if (!process.env.DATABASE_URL) throw new Error("DATABASE_REQUIRED");
+  const { db } = await import("@warsneaks/db");
   const scan = await db.adScan.findFirst({ where: { id, workspaceId } });
   if (!scan) throw new Error("SCAN_NOT_FOUND");
-  const job = await db.backgroundJob.findFirst({ where: { workspaceId, type: "meta_ads.playwright_scan", payload: { path: ["scanId"], equals: id } }, orderBy: { createdAt: "desc" } });
-  const effectiveStatus = scan.status === "queued" && job?.status === "running" ? "collecting" : scan.status === "queued" && job?.status === "failed" ? "failed" : scan.status;
-  return { ...scan, status: effectiveStatus, errorCode: scan.errorCode || job?.errorCode || null, createdAt: scan.createdAt.toISOString(), startedAt: (scan.startedAt || job?.startedAt)?.toISOString() || null, finishedAt: (scan.finishedAt || job?.finishedAt)?.toISOString() || null, stopRequestedAt: scan.stopRequestedAt?.toISOString() || null, summaryStartedAt: scan.summaryStartedAt?.toISOString() || null, job: job ? { id: job.id, status: job.status, attempts: job.attempts, createdAt: job.createdAt.toISOString(), startedAt: job.startedAt?.toISOString() || null, finishedAt: job.finishedAt?.toISOString() || null, errorCode: job.errorCode } : null };
+  if (!["succeeded", "partial"].includes(scan.status) || scan.resultCount < 1) throw new Error("INSIGHT_EVIDENCE_REQUIRED");
+  const model = process.env.DEEPSEEK_MODEL || "deepseek-v4-flash";
+  return db.$transaction(async tx => {
+    const insight = await tx.scanInsight.upsert({
+      where: { scanId: id },
+      update: { status: "queued", model, executiveSummary: null, marketVerdict: null, confidence: 0, productTrends: [], duplicateInsights: [], winningAngles: [], recommendations: [], risks: [], rawResponse: {}, errorCode: null, errorMessage: null, startedAt: null, finishedAt: null },
+      create: { scanId: id, status: "queued", model }
+    });
+    const job = await tx.backgroundJob.upsert({
+      where: { workspaceId_idempotencyKey: { workspaceId, idempotencyKey: "meta-ads-insight:" + id } },
+      update: { status: "queued", attempts: 0, payload: { scanId: id }, errorCode: null, startedAt: null, finishedAt: null },
+      create: { workspaceId, type: "meta_ads.analyze_scan", status: "queued", idempotencyKey: "meta-ads-insight:" + id, payload: { scanId: id } }
+    });
+    return { insight: serializeInsight(insight), job };
+  });
 }

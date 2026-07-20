@@ -1,50 +1,54 @@
 {
-    "name":  "warsneaks-dashboard",
-    "private":  true,
-    "type":  "module",
-    "workspaces":  [
-                       "apps/*",
-                       "packages/*"
-                   ],
-    "scripts":  {
-                    "dev":  "next dev apps/web",
-                    "build":  "next build apps/web",
-                    "lint":  "eslint apps packages tests --max-warnings=0",
-                    "typecheck":  "tsc --noEmit",
-                    "test":  "node --import tsx --test --test-isolation=none tests/*.test.*",
-                    "phase0:normalize":  "node scripts/normalize-meta-ads.mjs fixtures/meta-ads/manual-import.sample.json",
-                    "worker":  "tsx apps/worker/src/index.ts",
-                    "db:generate":  "prisma generate --schema packages/db/prisma/schema.prisma",
-                    "db:migrate":  "prisma migrate deploy --schema packages/db/prisma/schema.prisma",
-                    "db:seed":  "tsx packages/db/prisma/seed.ts",
-                    "verify:phase2-db":  "node --env-file=.env --import tsx scripts/verify-phase2-db.ts",
-                    "worker:meta-ads":  "node --env-file=.env --import tsx apps/worker/src/meta-ads-worker.ts",
-                    "scan:enqueue":  "node --env-file=.env --import tsx scripts/enqueue-live-scan.ts"
-                },
-    "prisma":  {
-                   "seed":  "tsx packages/db/prisma/seed.ts"
-               },
-    "dependencies":  {
-                         "@prisma/client":  "^6.19.0",
-                         "bcryptjs":  "^3.0.2",
-                         "jose":  "^6.1.0",
-                         "next":  "^15.5.7",
-                         "playwright-core":  "^1.55.1",
-                         "react":  "^19.1.1",
-                         "react-dom":  "^19.1.1",
-                         "zod":  "^3.25.76"
-                     },
-    "devDependencies":  {
-                            "@types/node":  "^24.10.1",
-                            "@types/react":  "^19.1.6",
-                            "@types/react-dom":  "^19.1.5",
-                            "eslint":  "^9.39.1",
-                            "eslint-config-next":  "^15.5.7",
-                            "prisma":  "^6.19.0",
-                            "tsx":  "^4.20.6",
-                            "typescript":  "^5.9.3"
-                        },
-    "overrides":  {
-                      "postcss":  "8.5.10"
-                  }
+  "name": "warsneaks-dashboard",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "next dev apps/web",
+    "build": "next build apps/web",
+    "lint": "eslint apps packages tests --max-warnings=0",
+    "typecheck": "tsc --noEmit",
+    "test": "node --import tsx --test --test-isolation=none tests/*.test.*",
+    "phase0:normalize": "node scripts/normalize-meta-ads.mjs fixtures/meta-ads/manual-import.sample.json",
+    "worker": "tsx apps/worker/src/index.ts",
+    "db:generate": "prisma generate --schema packages/db/prisma/schema.prisma",
+    "db:migrate": "prisma migrate deploy --schema packages/db/prisma/schema.prisma",
+    "db:seed": "tsx packages/db/prisma/seed.ts",
+    "verify:phase2-db": "node --env-file=.env --import tsx scripts/verify-phase2-db.ts",
+    "worker:meta-ads": "node --env-file=.env --import tsx apps/worker/src/meta-ads-worker.ts",
+    "scan:enqueue": "node --env-file=.env --import tsx scripts/enqueue-live-scan.ts",
+    "insight:enqueue": "node --env-file=.env --import tsx scripts/enqueue-latest-insight.ts"
+  },
+  "prisma": {
+    "seed": "tsx packages/db/prisma/seed.ts"
+  },
+  "dependencies": {
+    "@fontsource-variable/plus-jakarta-sans": "^5.3.0",
+    "@prisma/client": "^6.19.0",
+    "bcryptjs": "^3.0.2",
+    "gsap": "^3.15.0",
+    "jose": "^6.1.0",
+    "motion": "^12.42.2",
+    "next": "^15.5.7",
+    "playwright-core": "^1.55.1",
+    "react": "^19.1.1",
+    "react-dom": "^19.1.1",
+    "zod": "^3.25.76"
+  },
+  "devDependencies": {
+    "@types/node": "^24.10.1",
+    "@types/react": "^19.1.6",
+    "@types/react-dom": "^19.1.5",
+    "eslint": "^9.39.1",
+    "eslint-config-next": "^15.5.7",
+    "prisma": "^6.19.0",
+    "tsx": "^4.20.6",
+    "typescript": "^5.9.3"
+  },
+  "overrides": {
+    "postcss": "8.5.10"
+  }
 }
