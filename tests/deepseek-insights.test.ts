@@ -60,6 +60,7 @@ test("DeepSeek analysis is durable and insight-first UI keeps raw ads behind a b
 test("DeepSeek credentials are read from environment and never embedded in source", () => {
   const connector = read("packages/connectors/src/deepseek.ts");
   assert.match(connector, /process\.env\.DEEPSEEK_API_KEY/);
+  assert.match(connector, /thinking: \{ type: "disabled" \}/);
   const sources = [
     connector,
     read("apps/worker/src/meta-ads-worker.ts"),

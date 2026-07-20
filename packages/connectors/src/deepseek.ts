@@ -99,13 +99,13 @@ async function requestJson<T>(schema: z.ZodType<T>, messages: { role: "system" |
       const response = await fetch(endpoint, {
         method: "POST",
         headers: { authorization: `Bearer ${apiKey}`, "content-type": "application/json" },
-        body: JSON.stringify({ model, messages: requestMessages, response_format: { type: "json_object" }, temperature: 0.15, max_tokens: 6000 }),
+        body: JSON.stringify({ model, messages: requestMessages, thinking: { type: "disabled" }, response_format: { type: "json_object" }, temperature: 0.15, max_tokens: 6000 }),
         signal: controller.signal
       });
-      const payload = await response.json() as { choices?: { message?: { content?: string } }[]; error?: { message?: string }; model?: string };
+      const payload = await response.json() as { choices?: { finish_reason?: string; message?: { content?: string } }[]; error?: { message?: string }; model?: string };
       if (!response.ok) throw new Error(`DEEPSEEK_HTTP_${response.status}:${payload.error?.message || "request failed"}`);
       const content = payload.choices?.[0]?.message?.content;
-      if (!content) throw new Error("DEEPSEEK_EMPTY_RESPONSE");
+      if (!content) throw new Error("DEEPSEEK_EMPTY_RESPONSE_" + (payload.choices?.[0]?.finish_reason || "unknown").toUpperCase());
       const parsed = JSON.parse(cleanJson(content));
       return { value: schema.parse(parsed), raw: parsed, model: payload.model || model };
     } catch (reason) {
