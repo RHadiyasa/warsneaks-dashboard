@@ -782,6 +782,7 @@ Create a stable application foundation and visible system health.
 - [x] Web app and worker app.
 - [x] PostgreSQL and initial Prisma migrations.
 - [x] Authentication and default single-user workspace.
+- [x] Glossy, responsive, and accessible login experience without a pre-filled password.
 - [x] Base navigation and responsive shell.
 - [x] Background job lifecycle.
 - [x] Audit logging.
