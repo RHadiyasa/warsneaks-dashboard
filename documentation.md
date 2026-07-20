@@ -90,10 +90,12 @@ Verification completed: migration `20260720000000_phase2_scan_country` applied t
 12. **Production UI proof — passed.** An authenticated headless browser loaded `/meta-ads`, detected one DeepSeek market brief, three product cards, two “Lihat semua iklan” audit buttons, zero pending-analysis messages, and computed font `"Plus Jakarta Sans Variable", "Plus Jakarta Sans", sans-serif`. Internal and public HTTPS routes return the expected authenticated redirect boundary (HTTP 307).
 
 
-## Phase 1 — Glossy login experience (completed locally 2026-07-21)
+## Phase 1 — Glossy login experience (completed and deployed 2026-07-21)
 
 1. **Modern visual hierarchy — completed.** The plain login card is replaced by a restrained glossy shell with a dark intelligence showcase, translucent surface, soft gradient orbs, compact market-brief preview, and a focused authentication panel. Plus Jakarta Sans remains the only UI font.
 2. **Authentication UX — completed.** Email and password fields now have clear labels and icons, username/current-password autocomplete semantics, password visibility control, visible focus states, submit loading feedback, and an accessible error alert.
 3. **Safer defaults — completed.** The owner email remains available for convenience, while the password is no longer embedded or pre-filled in the production login source.
 4. **Responsive and accessible behavior — completed.** Desktop uses a two-panel shell; mobile collapses into a single card without horizontal overflow. Keyboard focus, reduced-motion preferences, disabled/loading states, and semantic labels are covered.
-5. **Local verification — passed.** Desktop and 390×844 mobile headless checks confirm the shell, 30px glass radius, 24px backdrop blur, empty password, visible form/toggle, and no horizontal overflow. Typecheck, lint, and 36/36 automated tests pass.
+5. **Local and production verification — passed.** Desktop and 390×844 mobile headless checks confirm the shell, 30px glass radius, 24px backdrop blur, empty password, visible form/toggle, and no horizontal overflow. Typecheck, lint, production build, and 36/36 automated tests pass locally and on the VPS.
+
+6. **Git and VPS deployment — completed.** Commit `7a1036f` (`Refresh login experience`) was pushed to `origin/master` and deployed to `/root/visa-warsneaks-dashboard`. PM2 restarted and saved only `warsneaks-web`; `warsneaks-worker` and `visa-desk` were left running unchanged. The public login route returns HTTP 200 at `https://warsneaks.ravisa.space/login`.
