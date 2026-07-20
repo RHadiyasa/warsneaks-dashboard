@@ -18,12 +18,12 @@ export default function LoginForm({ error }: { error?: string }) {
   const [showPassword, setShowPassword] = useState(false);
   const [submitting, setSubmitting] = useState(false);
 
-  return <form method="post" action="/api/auth/login" className="auth-form" onSubmit={() => setSubmitting(true)}>
+  return <form method="post" action="/api/auth/login" className="auth-form" onSubmit={() => setSubmitting(true)} aria-busy={submitting}>
     <label className="auth-field" htmlFor="email">
       <span>Email</span>
       <div className="auth-input-wrap">
         <MailIcon />
-        <input id="email" name="email" type="email" defaultValue="owner@warsneaks.local" autoComplete="username" inputMode="email" required disabled={submitting} />
+        <input id="email" name="email" type="email" defaultValue="owner@warsneaks.local" autoComplete="username" inputMode="email" required readOnly={submitting} aria-disabled={submitting} />
       </div>
     </label>
 
@@ -31,8 +31,8 @@ export default function LoginForm({ error }: { error?: string }) {
       <span>Password</span>
       <div className="auth-input-wrap">
         <LockIcon />
-        <input id="password" name="password" type={showPassword ? "text" : "password"} placeholder="Masukkan password Anda" autoComplete="current-password" required minLength={8} disabled={submitting} autoFocus />
-        <button className="auth-password-toggle" type="button" onClick={() => setShowPassword(value => !value)} aria-label={showPassword ? "Sembunyikan password" : "Tampilkan password"} aria-pressed={showPassword}>
+        <input id="password" name="password" type={showPassword ? "text" : "password"} placeholder="Masukkan password Anda" autoComplete="current-password" required minLength={8} readOnly={submitting} aria-disabled={submitting} autoFocus />
+        <button className="auth-password-toggle" type="button" onClick={() => setShowPassword(value => !value)} aria-label={showPassword ? "Sembunyikan password" : "Tampilkan password"} aria-pressed={showPassword} disabled={submitting}>
           <EyeIcon hidden={showPassword} />
         </button>
       </div>

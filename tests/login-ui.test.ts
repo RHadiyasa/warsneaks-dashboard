@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
+import { relativeRedirect } from "../apps/web/lib/relative-redirect.ts";
 
 const read = (path: string) => fs.readFileSync(path, "utf8");
 
@@ -30,4 +31,27 @@ test("production login never pre-fills or embeds the demo password", () => {
   const form = read("apps/web/app/login/login-form.tsx");
   assert.doesNotMatch(page + form, /change-me-before-production/);
   assert.doesNotMatch(form, /defaultValue=.*password/i);
+});
+
+test("submitting keeps credential fields in the native form payload", () => {
+  const form = read("apps/web/app/login/login-form.tsx");
+  assert.match(form, /readOnly=\{submitting\}/);
+  assert.doesNotMatch(form, /<input[^>]+\sdisabled=\{submitting\}/);
+});
+
+test("authentication redirects stay on the browser's current origin", () => {
+  const response = relativeRedirect("/login?error=validation");
+  assert.equal(response.status, 303);
+  assert.equal(response.headers.get("location"), "/login?error=validation");
+  assert.throws(() => relativeRedirect("https://localhost:3004/login"), /application-relative/);
+
+  for (const path of [
+    "apps/web/app/api/auth/login/route.ts",
+    "apps/web/app/api/auth/logout/route.ts",
+    "apps/web/middleware.ts",
+  ]) {
+    const source = read(path);
+    assert.match(source, /relativeRedirect/);
+    assert.doesNotMatch(source, /new URL\([^)]*request\.url/);
+  }
 });

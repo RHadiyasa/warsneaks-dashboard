@@ -1,1 +1,8 @@
-import { NextResponse } from "next/server";import { cookieName } from "@web/lib/auth";export async function POST(request:Request){const response=NextResponse.redirect(new URL("/login",request.url),303);response.cookies.delete(cookieName);return response}
+import { cookieName } from "@web/lib/auth";
+import { relativeRedirect } from "@web/lib/relative-redirect";
+
+export async function POST() {
+  const response = relativeRedirect("/login");
+  response.cookies.delete(cookieName);
+  return response;
+}

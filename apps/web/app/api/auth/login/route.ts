@@ -1,3 +1,25 @@
-import { NextResponse } from "next/server";import { z } from "zod";import { cookieName,createSession,verifyCredentials } from "@web/lib/auth";
-const input=z.object({email:z.string().email(),password:z.string().min(8)});
-export async function POST(request:Request){const form=Object.fromEntries(await request.formData());const parsed=input.safeParse(form);if(!parsed.success)return NextResponse.redirect(new URL("/login?error=validation",request.url),303);const user=await verifyCredentials(parsed.data.email,parsed.data.password);if(!user)return NextResponse.redirect(new URL("/login?error=credentials",request.url),303);const response=NextResponse.redirect(new URL("/dashboard",request.url),303);response.cookies.set(cookieName,await createSession(user.userId,user.workspaceId),{httpOnly:true,sameSite:"lax",secure:process.env.NODE_ENV==="production",path:"/",maxAge:28800});return response}
+import { z } from "zod";
+import { cookieName, createSession, verifyCredentials } from "@web/lib/auth";
+import { relativeRedirect } from "@web/lib/relative-redirect";
+
+const input = z.object({ email: z.string().email(), password: z.string().min(8) });
+
+export async function POST(request: Request) {
+  const form = Object.fromEntries(await request.formData());
+  const parsed = input.safeParse(form);
+
+  if (!parsed.success) return relativeRedirect("/login?error=validation");
+
+  const user = await verifyCredentials(parsed.data.email, parsed.data.password);
+  if (!user) return relativeRedirect("/login?error=credentials");
+
+  const response = relativeRedirect("/dashboard");
+  response.cookies.set(cookieName, await createSession(user.userId, user.workspaceId), {
+    httpOnly: true,
+    sameSite: "lax",
+    secure: process.env.NODE_ENV === "production",
+    path: "/",
+    maxAge: 28800,
+  });
+  return response;
+}
