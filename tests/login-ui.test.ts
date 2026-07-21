@@ -39,7 +39,7 @@ test("submitting keeps credential fields in the native form payload", () => {
   assert.doesNotMatch(form, /<input[^>]+\sdisabled=\{submitting\}/);
 });
 
-test("authentication redirects stay on the browser's current origin", () => {
+test("authentication redirects stay on the intended application origin", () => {
   const response = relativeRedirect("/login?error=validation");
   assert.equal(response.status, 303);
   assert.equal(response.headers.get("location"), "/login?error=validation");
@@ -48,10 +48,15 @@ test("authentication redirects stay on the browser's current origin", () => {
   for (const path of [
     "apps/web/app/api/auth/login/route.ts",
     "apps/web/app/api/auth/logout/route.ts",
-    "apps/web/middleware.ts",
   ]) {
     const source = read(path);
     assert.match(source, /relativeRedirect/);
     assert.doesNotMatch(source, /new URL\([^)]*request\.url/);
   }
+
+  const middleware = read("apps/web/middleware.ts");
+  assert.match(middleware, /process\.env\.APP_ORIGIN/);
+  assert.match(middleware, /NextResponse\.redirect\(login\)/);
+  assert.doesNotMatch(middleware, /new URL\([^)]*request\.url/);
+  assert.match(read(".env.example"), /APP_ORIGIN=/);
 });
