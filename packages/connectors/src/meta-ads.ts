@@ -5,7 +5,7 @@ const clean=(value:unknown)=>String(value??"").trim().replace(/\s+/g," ");
 export function fingerprint(ad:Pick<NormalizedMetaAd,"advertiserName"|"body"|"headline"|"cta"|"landingPageUrl">){return createHash("sha256").update([ad.advertiserName,ad.body,ad.headline,ad.cta,ad.landingPageUrl].map(x=>clean(x).toLowerCase()).join("|")).digest("hex")}
 export function normalizeMetaAd(raw:RawMetaAd,observedAt=new Date().toISOString()):NormalizedMetaAd{const sourceAdId=clean(raw.libraryId||raw.adId||raw.sourceAdId)||null;const platforms=Array.isArray(raw.platforms)?raw.platforms:String(raw.platforms||"").split(",");const ad={source:"meta_ads_library" as const,sourceAdId,advertiserName:clean(raw.pageName||raw.advertiserName)||"Unknown advertiser",advertiserUrl:clean(raw.advertiserUrl)||null,body:clean(raw.body||raw.primaryText||raw.adText),headline:clean(raw.headline||raw.adHeadline)||null,cta:clean(raw.cta||raw.ctaText)||null,landingPageUrl:clean(raw.destinationUrl||raw.landingPageUrl)||null,startedRunningAt:raw.startedRunningAt||null};const contentFingerprint=fingerprint(ad);return {...ad,canonicalKey:sourceAdId?`meta_ads_library:${sourceAdId}`:`meta_ads_library:fingerprint:${contentFingerprint}`,contentFingerprint,observation:{observedAt,isActive:raw.isActive??null,platforms:[...new Set(platforms.map(clean).filter(Boolean))].sort(),duplicateCount:Number.isFinite(raw.duplicateCount)?raw.duplicateCount!:null}}}
 export function parseManualImport(input:unknown,observedAt?:string){if(!input||typeof input!=="object")throw new Error("INVALID_IMPORT");const envelope=input as {ads?:RawMetaAd[];duplicateAds?:RawMetaAd[]};const rows=envelope.ads||envelope.duplicateAds;if(!Array.isArray(rows))throw new Error("IMPORT_ADS_REQUIRED");return rows.map(row=>normalizeMetaAd(row,observedAt))}
-export function buildMetaAdsLibraryUrl(keyword:string,country="ID"){const params=new URLSearchParams({active_status:"active",ad_type:"all",country:country.toUpperCase(),q:keyword,search_type:"keyword_unordered"});return `https://web.facebook.com/ads/library/?${params.toString()}`}
+export function buildMetaAdsLibraryUrl(keyword:string,country="ID"){const params=new URLSearchParams({active_status:"active",ad_type:"all",country:country.toUpperCase(),is_targeted_country:"false",media_type:"all",q:keyword,search_type:"keyword_unordered","sort_data[mode]":"total_impressions","sort_data[direction]":"desc"});return `https://www.facebook.com/ads/library/?${params.toString()}`}
 export interface MetaAdsScanProgress {
   discoveredCount: number;
   scrollCount: number;
@@ -17,6 +17,7 @@ export interface MetaAdsScanOptions {
   maxScrolls?: number;
   stableRounds?: number;
   scrollDelayMs?: number;
+  resultWaitMs?: number;
   shouldStop?: () => Promise<boolean>;
   onProgress?: (progress: MetaAdsScanProgress) => Promise<void>;
 }
@@ -81,13 +82,33 @@ async function extractVisibleMetaAds(page: import("playwright-core").Page): Prom
   }));
 }
 
+async function waitForNewMetaAdId(page: import("playwright-core").Page, knownIds: Set<string>, timeoutMs: number) {
+  const deadline = Date.now() + timeoutMs;
+  let nextNudgeAt = Date.now() + 1000;
+  const idNodes = page.getByText(/(?:Library ID|ID Galeri):\s*\d+/i);
+  while (Date.now() < deadline) {
+    await page.waitForTimeout(Math.min(500, Math.max(1, deadline - Date.now())));
+    const ids = await idNodes.evaluateAll(nodes => nodes.map(node =>
+      (node.textContent || "").match(/(?:Library ID|ID Galeri):\s*(\d+)/i)?.[1]
+    ).filter((id): id is string => Boolean(id)));
+    if (ids.some(id => !knownIds.has(id))) return true;
+    if (Date.now() >= nextNudgeAt) {
+      await page.evaluate(() => window.scrollTo(0, document.scrollingElement?.scrollHeight || document.body.scrollHeight));
+      await page.mouse.wheel(0, 1200);
+      nextNudgeAt = Date.now() + 1000;
+    }
+  }
+  return false;
+}
+
 export async function scanMetaAdsLibrary(keyword: string, country = "ID", options: MetaAdsScanOptions = {}): Promise<MetaAdsScanResult> {
   const executablePath = process.env.PLAYWRIGHT_CHROMIUM_PATH;
   if (!executablePath) throw new Error("PLAYWRIGHT_BROWSER_NOT_CONFIGURED");
   const targetCount = Math.min(500, Math.max(10, options.targetCount ?? 100));
   const maxScrolls = Math.min(200, Math.max(1, options.maxScrolls ?? 80));
-  const stableLimit = Math.min(10, Math.max(2, options.stableRounds ?? 3));
+  const stableLimit = Math.min(10, Math.max(2, options.stableRounds ?? 5));
   const scrollDelayMs = Math.min(5000, Math.max(500, options.scrollDelayMs ?? 1400));
+  const resultWaitMs = Math.min(15_000, Math.max(2_000, options.resultWaitMs ?? Math.max(6_000, scrollDelayMs)));
   const browser = await chromium.launch({ headless: true, executablePath });
   try {
     const page = await browser.newPage({ locale: "id-ID", viewport: { width: 1440, height: 1100 } });
@@ -125,10 +146,10 @@ export async function scanMetaAdsLibrary(keyword: string, country = "ID", option
       if (unchangedRounds >= stableLimit) { stopReason = "no_new_results"; break; }
       if (scrollCount >= maxScrolls) { stopReason = "max_scrolls"; break; }
 
-      await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
+      await page.evaluate(() => window.scrollTo(0, document.scrollingElement?.scrollHeight || document.body.scrollHeight));
       await page.mouse.wheel(0, 1600);
       scrollCount += 1;
-      await page.waitForTimeout(scrollDelayMs);
+      await waitForNewMetaAdId(page, new Set(collected.keys()), resultWaitMs);
     }
     return { ads: [...collected.values()], scrollCount, stopReason };
   } finally {

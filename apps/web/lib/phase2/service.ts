@@ -136,7 +136,7 @@ export async function requestScanStop(id: string) {
 }
 
 export async function getScanProgress(id: string) {
-  if (!process.env.DATABASE_URL) { const scan = phase2Memory.scans.find(item => item.id === id); if (!scan) throw new Error("SCAN_NOT_FOUND"); return { ...scan, job: null }; }
+  if (!process.env.DATABASE_URL) { const scan = phase2Memory.scans.find(item => item.id === id); if (!scan) throw new Error("SCAN_NOT_FOUND"); return { ...scan, stopReason: null, job: null }; }
   const { db } = await import("@warsneaks/db");
   const scan = await db.adScan.findFirst({ where: { id, workspaceId }, include: { insight: true } });
   if (!scan) throw new Error("SCAN_NOT_FOUND");
@@ -145,7 +145,9 @@ export async function getScanProgress(id: string) {
     db.backgroundJob.findFirst({ where: { workspaceId, type: "meta_ads.analyze_scan", payload: { path: ["scanId"], equals: id } }, orderBy: { createdAt: "desc" } })
   ]);
   const effectiveStatus = scan.status === "queued" && job?.status === "running" ? "collecting" : scan.status === "queued" && job?.status === "failed" ? "failed" : scan.status;
-  return { ...scan, insight: scan.insight ? { ...scan.insight, startedAt: scan.insight.startedAt?.toISOString() || null, finishedAt: scan.insight.finishedAt?.toISOString() || null, createdAt: scan.insight.createdAt.toISOString(), updatedAt: scan.insight.updatedAt.toISOString() } : null, status: effectiveStatus, errorCode: scan.errorCode || job?.errorCode || null, createdAt: scan.createdAt.toISOString(), startedAt: (scan.startedAt || job?.startedAt)?.toISOString() || null, finishedAt: (scan.finishedAt || job?.finishedAt)?.toISOString() || null, stopRequestedAt: scan.stopRequestedAt?.toISOString() || null, summaryStartedAt: scan.summaryStartedAt?.toISOString() || null, job: job ? { id: job.id, status: job.status, attempts: job.attempts, createdAt: job.createdAt.toISOString(), startedAt: job.startedAt?.toISOString() || null, finishedAt: job.finishedAt?.toISOString() || null, errorCode: job.errorCode } : null, analysisJob: analysisJob ? { id: analysisJob.id, status: analysisJob.status, attempts: analysisJob.attempts, errorCode: analysisJob.errorCode } : null };
+  const jobResult = job?.result;
+  const stopReason = jobResult && typeof jobResult === "object" && !Array.isArray(jobResult) && "stopReason" in jobResult && typeof jobResult.stopReason === "string" ? jobResult.stopReason : null;
+  return { ...scan, stopReason, insight: scan.insight ? { ...scan.insight, startedAt: scan.insight.startedAt?.toISOString() || null, finishedAt: scan.insight.finishedAt?.toISOString() || null, createdAt: scan.insight.createdAt.toISOString(), updatedAt: scan.insight.updatedAt.toISOString() } : null, status: effectiveStatus, errorCode: scan.errorCode || job?.errorCode || null, createdAt: scan.createdAt.toISOString(), startedAt: (scan.startedAt || job?.startedAt)?.toISOString() || null, finishedAt: (scan.finishedAt || job?.finishedAt)?.toISOString() || null, stopRequestedAt: scan.stopRequestedAt?.toISOString() || null, summaryStartedAt: scan.summaryStartedAt?.toISOString() || null, job: job ? { id: job.id, status: job.status, attempts: job.attempts, createdAt: job.createdAt.toISOString(), startedAt: job.startedAt?.toISOString() || null, finishedAt: job.finishedAt?.toISOString() || null, errorCode: job.errorCode } : null, analysisJob: analysisJob ? { id: analysisJob.id, status: analysisJob.status, attempts: analysisJob.attempts, errorCode: analysisJob.errorCode } : null };
 }
 export async function requestScanAnalysis(id: string) {
   if (!process.env.DATABASE_URL) throw new Error("DATABASE_REQUIRED");

@@ -1,13 +1,20 @@
 import { Prisma } from "@prisma/client";
 import { db } from "@warsneaks/db";
 import { analyzeMetaAdsScan, type DuplicateEvidence, type MetaAdsAnalysisAd } from "../../../packages/connectors/src/deepseek";
-import { parseManualImport, scanMetaAdsLibrary, type RawMetaAd } from "../../../packages/connectors/src/meta-ads";
+import { parseManualImport, scanMetaAdsLibrary, type MetaAdsScanResult, type RawMetaAd } from "../../../packages/connectors/src/meta-ads";
 
 type ScanPayload = { scanId: string; keyword: string; country?: string; targetCount?: number };
 type InsightPayload = { scanId: string };
 const scanTimeoutMs = 180_000;
 const staleTimeoutMs = 300_000;
 const supportedJobs = ["meta_ads.playwright_scan", "meta_ads.analyze_scan"];
+
+const scanCompletionMessage = (reason: MetaAdsScanResult["stopReason"], resultCount: number, targetCount: number) => {
+  if (reason === "target_reached") return `Target ${targetCount} iklan tercapai`;
+  if (reason === "user_requested") return "Dihentikan pengguna dan berhasil dirangkum";
+  if (reason === "max_scrolls") return `Batas keamanan scroll tercapai; ${resultCount} iklan berhasil dirangkum`;
+  return `Meta tidak memuat Library ID baru; ${resultCount} iklan berhasil dirangkum`;
+};
 
 const creativeKey = (ad: { advertiser: { name: string }; body: string; headline: string | null; cta: string | null }) =>
   [ad.advertiser.name, ad.body, ad.headline || "", ad.cta || ""].map(value => value.trim().replace(/\s+/g, " ").toLowerCase()).join("|");
@@ -150,12 +157,13 @@ async function processScanJob(job: { id: string; workspaceId: string; payload: P
     });
     await db.adScan.update({ where: { id: payload.scanId }, data: { status: "summarizing", summaryStartedAt: new Date(), scrollCount: result.scrollCount, progressMessage: `Mengelompokkan ${result.ads.length} iklan` } });
     const summary = await summarizeScan(payload.scanId);
+    const progressMessage = scanCompletionMessage(result.stopReason, summary.resultCount, payload.targetCount || 100);
     await db.$transaction([
-      db.adScan.update({ where: { id: payload.scanId }, data: { status: "succeeded", ...summary, discoveredCount: summary.resultCount, progressMessage: result.stopReason === "user_requested" ? "Dihentikan pengguna dan berhasil dirangkum" : "Pengumpulan dan rangkuman selesai", finishedAt: new Date() } }),
+      db.adScan.update({ where: { id: payload.scanId }, data: { status: "succeeded", ...summary, discoveredCount: summary.resultCount, progressMessage, finishedAt: new Date() } }),
       db.backgroundJob.update({ where: { id: job.id }, data: { status: "succeeded", finishedAt: new Date(), result: { ...summary, stopReason: result.stopReason } } })
     ]);
     await queueScanAnalysis(job.workspaceId, payload.scanId);
-    console.log(`Completed ${job.id}: ${summary.resultCount} ads; DeepSeek analysis queued`);
+    console.log(`Completed ${job.id}: ${summary.resultCount} ads (${result.stopReason}); DeepSeek analysis queued`);
   } catch (reason) {
     const message = reason instanceof Error ? reason.message : "SCAN_FAILED";
     const saved = await db.adObservation.count({ where: { scanId: payload.scanId } });
