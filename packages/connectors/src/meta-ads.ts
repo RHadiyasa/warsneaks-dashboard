@@ -25,7 +25,15 @@ export interface MetaAdsScanOptions {
 export interface MetaAdsScanResult {
   ads: RawMetaAd[];
   scrollCount: number;
-  stopReason: "target_reached" | "user_requested" | "no_new_results" | "max_scrolls";
+  stopReason: "target_reached" | "user_requested" | "no_new_results" | "max_scrolls" | "rate_limited";
+}
+
+export function extractMetaAdLibraryIds(text: string) {
+  return [...new Set([...text.matchAll(/(?:Library ID|ID Galeri):\s*(\d+)/gi)].map(match => match[1]))];
+}
+
+export function isMetaAdsRateLimitedResponse(body: string) {
+  return /"code"\s*:\s*1675004\b|rate limit exceeded/i.test(body);
 }
 
 async function extractVisibleMetaAds(page: import("playwright-core").Page): Promise<RawMetaAd[]> {
@@ -82,23 +90,38 @@ async function extractVisibleMetaAds(page: import("playwright-core").Page): Prom
   }));
 }
 
-async function waitForNewMetaAdId(page: import("playwright-core").Page, knownIds: Set<string>, timeoutMs: number) {
+async function readMetaAdLibraryIds(page: import("playwright-core").Page) {
+  const texts = await page.getByText(/(?:Library ID|ID Galeri):\s*\d+/i).allTextContents();
+  return new Set(extractMetaAdLibraryIds(texts.join("\n")));
+}
+
+async function loadMoreMetaAds(page: import("playwright-core").Page, knownIds: Set<string>, timeoutMs: number) {
   const deadline = Date.now() + timeoutMs;
   let nextNudgeAt = Date.now() + 1000;
-  const idNodes = page.getByText(/(?:Library ID|ID Galeri):\s*\d+/i);
+  const loadMore = page.getByRole("button", { name: /^(?:Lihat lebih banyak|See more)$/i }).last();
+  if (await loadMore.count()) {
+    const paginationResponse = page.waitForResponse(response =>
+      response.url().includes("/api/graphql/") &&
+      response.request().postData()?.includes("AdLibrarySearchPaginationQuery") === true,
+    { timeout: Math.min(5000, timeoutMs) }).catch(() => undefined);
+    const clicked = await loadMore.click({ timeout: 3000 }).then(() => true).catch(() => false);
+    if (clicked) {
+      const response = await paginationResponse;
+      const body = await response?.text().catch(() => "");
+      if (body && isMetaAdsRateLimitedResponse(body)) return "rate_limited" as const;
+    }
+  }
   while (Date.now() < deadline) {
     await page.waitForTimeout(Math.min(500, Math.max(1, deadline - Date.now())));
-    const ids = await idNodes.evaluateAll(nodes => nodes.map(node =>
-      (node.textContent || "").match(/(?:Library ID|ID Galeri):\s*(\d+)/i)?.[1]
-    ).filter((id): id is string => Boolean(id)));
-    if (ids.some(id => !knownIds.has(id))) return true;
+    const ids = await readMetaAdLibraryIds(page);
+    if ([...ids].some(id => !knownIds.has(id))) return "new_results" as const;
     if (Date.now() >= nextNudgeAt) {
       await page.evaluate(() => window.scrollTo(0, document.scrollingElement?.scrollHeight || document.body.scrollHeight));
       await page.mouse.wheel(0, 1200);
       nextNudgeAt = Date.now() + 1000;
     }
   }
-  return false;
+  return "no_new_results" as const;
 }
 
 export async function scanMetaAdsLibrary(keyword: string, country = "ID", options: MetaAdsScanOptions = {}): Promise<MetaAdsScanResult> {
@@ -146,10 +169,12 @@ export async function scanMetaAdsLibrary(keyword: string, country = "ID", option
       if (unchangedRounds >= stableLimit) { stopReason = "no_new_results"; break; }
       if (scrollCount >= maxScrolls) { stopReason = "max_scrolls"; break; }
 
+      const knownDomIds = await readMetaAdLibraryIds(page);
       await page.evaluate(() => window.scrollTo(0, document.scrollingElement?.scrollHeight || document.body.scrollHeight));
       await page.mouse.wheel(0, 1600);
       scrollCount += 1;
-      await waitForNewMetaAdId(page, new Set(collected.keys()), resultWaitMs);
+      const loadResult = await loadMoreMetaAds(page, knownDomIds, resultWaitMs);
+      if (loadResult === "rate_limited") { stopReason = "rate_limited"; break; }
     }
     return { ads: [...collected.values()], scrollCount, stopReason };
   } finally {

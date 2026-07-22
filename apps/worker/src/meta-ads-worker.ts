@@ -13,6 +13,7 @@ const scanCompletionMessage = (reason: MetaAdsScanResult["stopReason"], resultCo
   if (reason === "target_reached") return `Target ${targetCount} iklan tercapai`;
   if (reason === "user_requested") return "Dihentikan pengguna dan berhasil dirangkum";
   if (reason === "max_scrolls") return `Batas keamanan scroll tercapai; ${resultCount} iklan berhasil dirangkum`;
+  if (reason === "rate_limited") return `Meta membatasi pagination sementara; ${resultCount} iklan awal berhasil dirangkum`;
   return `Meta tidak memuat Library ID baru; ${resultCount} iklan berhasil dirangkum`;
 };
 

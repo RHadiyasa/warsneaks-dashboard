@@ -8,7 +8,7 @@ import SpotlightCard from "./SpotlightCard";
 type Observation = { id?: string; observedAt: string; isActive: boolean | null; platforms: string[]; duplicateCount: number | null };
 type Ad = { id: string; canonicalKey: string; sourceAdId: string | null; body: string; headline: string | null; cta: string | null; landingPageUrl: string | null; isWatched: boolean; tags: string[]; notes: string | null; advertiser?: { id: string; name: string; isWatched: boolean }; advertiserName?: string; observations: Observation[] };
 type InsightState = { status: string; model?: string; errorCode?: string | null; errorMessage?: string | null };
-type ScanStopReason = "target_reached" | "user_requested" | "no_new_results" | "max_scrolls";
+type ScanStopReason = "target_reached" | "user_requested" | "no_new_results" | "max_scrolls" | "rate_limited";
 type Scan = { id: string; keyword: string; country?: string; method?: string; status: string; resultCount: number; targetCount?: number; discoveredCount?: number; scrollCount?: number; stopReason?: ScanStopReason | null; progressMessage?: string | null; errorCode?: string | null; errorMessage?: string | null; insight?: InsightState | null; analysisJob?: { status: string; attempts: number } | null };
 type Opportunity = { id: string; name: string; status: string; score: number; confidence: number; nextAction: string };
 type DuplicateGroup = { fingerprint: string; advertiserName: string; instanceCount: number; headline: string | null; body: string; ads: { id: string; sourceAdId: string | null }[] };
@@ -29,7 +29,7 @@ const wait = (milliseconds: number) => new Promise(resolve => setTimeout(resolve
 const demoImport = JSON.stringify({ ads: [{ libraryId: "DEMO-MANUAL-01", pageName: "Manual Demo Store", body: "Sneakers ringan untuk aktivitas harian", headline: "Nyaman setiap langkah", cta: "SHOP_NOW", destinationUrl: "https://example.invalid/manual", isActive: true, platforms: ["facebook", "instagram"], duplicateCount: 3 }] }, null, 2);
 const verdictLabel: Record<string, string> = { strong_opportunity: "Peluang kuat", watch: "Pantau", insufficient_evidence: "Evidence terbatas", avoid: "Hindari sementara" };
 const signalLabel: Record<ProductTrend["signal"], string> = { dominant_current_scan: "Dominan di scan ini", emerging: "Mulai muncul", rising: "Sedang naik", stable: "Stabil", declining: "Menurun" };
-const scanStopReasonLabel: Record<ScanStopReason, string> = { target_reached: "Target tercapai", user_requested: "Dihentikan pengguna", no_new_results: "Meta tidak memuat hasil baru", max_scrolls: "Batas keamanan scroll tercapai" };
+const scanStopReasonLabel: Record<ScanStopReason, string> = { target_reached: "Target tercapai", user_requested: "Dihentikan pengguna", no_new_results: "Meta tidak memuat hasil baru", max_scrolls: "Batas keamanan scroll tercapai", rate_limited: "Meta membatasi pagination sementara" };
 
 export default function MetaAdsInbox({ initial }: { initial: Inbox }) {
   const [data, setData] = useState(initial);
