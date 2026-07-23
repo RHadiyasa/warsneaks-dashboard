@@ -18,6 +18,7 @@
     "db:migrate": "prisma migrate deploy --schema packages/db/prisma/schema.prisma",
     "db:seed": "tsx packages/db/prisma/seed.ts",
     "verify:phase2-db": "node --env-file=.env --import tsx scripts/verify-phase2-db.ts",
+    "verify:browser-extension": "node --env-file=.env scripts/verify-browser-extension.mjs",
     "worker:meta-ads": "node --env-file=.env --import tsx apps/worker/src/meta-ads-worker.ts",
     "scan:enqueue": "node --env-file=.env --import tsx scripts/enqueue-live-scan.ts",
     "insight:enqueue": "node --env-file=.env --import tsx scripts/enqueue-latest-insight.ts"

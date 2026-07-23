@@ -1,10 +1,12 @@
 import fs from "node:fs/promises";
 import path from "node:path";
-import { parseManualImport, type NormalizedMetaAd } from "../../../../packages/connectors/src/meta-ads";
+import { parseManualImport, type MetaAdsScanResult, type NormalizedMetaAd } from "../../../../packages/connectors/src/meta-ads";
 import { scoreOpportunity, type CanonicalAd } from "../../../../packages/domain/src/phase2";
 import { phase2Memory } from "./memory";
 
 const workspaceId = "demo-workspace";
+type ScanMetadata = Pick<MetaAdsScanResult, "scrollCount" | "stopReason">;
+const scanStopReasons = new Set<MetaAdsScanResult["stopReason"]>(["target_reached", "user_requested", "no_new_results", "max_scrolls", "rate_limited"]);
 const dateOrNull = (value: string | null) => { if (!value) return null; const date = new Date(value); return Number.isNaN(date.getTime()) ? null : date; };
 const creativeKey = (ad: { advertiserName: string; body: string; headline: string | null; cta: string | null }) =>
   [ad.advertiserName, ad.body, ad.headline || "", ad.cta || ""].map(value => value.trim().replace(/\s+/g, " ").toLowerCase()).join("|");
@@ -31,22 +33,39 @@ function summarizeRows(rows: NormalizedMetaAd[]) {
   };
 }
 
-async function persistScan(keyword: string, method: string, inputRows: NormalizedMetaAd[], failure?: { code: string; message: string }, country = "ID", targetCount = 100) {
+const completionMessage = (metadata?: ScanMetadata) => {
+  if (metadata?.stopReason === "target_reached") return "Target iklan tercapai dari tab browser";
+  if (metadata?.stopReason === "user_requested") return "Dihentikan pengguna dan berhasil dirangkum";
+  if (metadata?.stopReason === "max_scrolls") return "Batas keamanan scroll tercapai";
+  if (metadata?.stopReason === "rate_limited") return "Meta membatasi pagination sementara";
+  if (metadata?.stopReason === "no_new_results") return "Meta tidak memuat Library ID baru";
+  return null;
+};
+
+function browserMetadata(payload: unknown): ScanMetadata {
+  if (!payload || typeof payload !== "object") throw new Error("INVALID_BROWSER_SCAN_METADATA");
+  const value = payload as { scrollCount?: unknown; stopReason?: unknown };
+  if (!Number.isInteger(value.scrollCount) || Number(value.scrollCount) < 0 || Number(value.scrollCount) > 10_000) throw new Error("INVALID_BROWSER_SCROLL_COUNT");
+  if (typeof value.stopReason !== "string" || !scanStopReasons.has(value.stopReason as MetaAdsScanResult["stopReason"])) throw new Error("INVALID_BROWSER_STOP_REASON");
+  return { scrollCount: Number(value.scrollCount), stopReason: value.stopReason as MetaAdsScanResult["stopReason"] };
+}
+
+async function persistScan(keyword: string, method: string, inputRows: NormalizedMetaAd[], failure?: { code: string; message: string }, country = "ID", targetCount = 100, metadata?: ScanMetadata) {
   const rows = [...new Map(inputRows.map(row => [row.canonicalKey, row])).values()];
-  if (!process.env.DATABASE_URL) return phase2Memory.run(keyword, rows, failure?.code);
+  if (!process.env.DATABASE_URL) return phase2Memory.run(keyword, rows, failure?.code, metadata);
   const { db } = await import("@warsneaks/db");
   return db.$transaction(async tx => {
-    const scan = await tx.adScan.create({ data: { workspaceId, keyword, country, targetCount, method, status: "running", startedAt: new Date() } });
+    const scan = await tx.adScan.create({ data: { workspaceId, keyword, country, targetCount, method, status: "running", startedAt: new Date(), scrollCount: metadata?.scrollCount || 0, stopReason: metadata?.stopReason, progressMessage: completionMessage(metadata) } });
     for (const row of rows) {
       const advertiser = await tx.advertiser.upsert({ where: { workspaceId_source_name: { workspaceId, source: row.source, name: row.advertiserName } }, update: { pageUrl: row.advertiserUrl }, create: { workspaceId, source: row.source, name: row.advertiserName, pageUrl: row.advertiserUrl } });
       const ad = await tx.competitorAd.upsert({ where: { workspaceId_canonicalKey: { workspaceId, canonicalKey: row.canonicalKey } }, update: { advertiserId: advertiser.id, body: row.body, headline: row.headline, cta: row.cta, landingPageUrl: row.landingPageUrl }, create: { workspaceId, advertiserId: advertiser.id, source: row.source, sourceAdId: row.sourceAdId, canonicalKey: row.canonicalKey, contentFingerprint: row.contentFingerprint, body: row.body, headline: row.headline, cta: row.cta, landingPageUrl: row.landingPageUrl, startedRunningAt: dateOrNull(row.startedRunningAt) } });
       await tx.adObservation.upsert({ where: { scanId_competitorAdId: { scanId: scan.id, competitorAdId: ad.id } }, update: {}, create: { scanId: scan.id, competitorAdId: ad.id, observedAt: new Date(row.observation.observedAt), isActive: row.observation.isActive, platforms: row.observation.platforms, duplicateCount: row.observation.duplicateCount } });
     }
-    return tx.adScan.update({ where: { id: scan.id }, data: { status: failure ? (rows.length ? "partial" : "failed") : "succeeded", ...summarizeRows(rows), errorCode: failure?.code, errorMessage: failure?.message, finishedAt: new Date() } });
-  });
+    return tx.adScan.update({ where: { id: scan.id }, data: { status: failure ? (rows.length ? "partial" : "failed") : "succeeded", ...summarizeRows(rows), scrollCount: metadata?.scrollCount || 0, stopReason: metadata?.stopReason, progressMessage: completionMessage(metadata), errorCode: failure?.code, errorMessage: failure?.message, finishedAt: new Date() } });
+  }, { maxWait: 10_000, timeout: 120_000 });
 }
 
-export async function runScan(input: { keyword: string; method: "fixture" | "manual" | "playwright"; payload?: unknown; country?: string; targetCount?: number }) {
+export async function runScan(input: { keyword: string; method: "browser" | "fixture" | "manual" | "playwright"; payload?: unknown; country?: string; targetCount?: number }) {
   const targetCount = Math.min(500, Math.max(10, input.targetCount || 100));
   if (input.method === "playwright") {
     if (!process.env.DATABASE_URL) return persistScan(input.keyword, input.method, [], { code: "DATABASE_REQUIRED_FOR_DURABLE_JOB", message: "Live scans require the durable worker" }, input.country || "ID", targetCount);
@@ -58,13 +77,16 @@ export async function runScan(input: { keyword: string; method: "fixture" | "man
     });
   }
   let rows: NormalizedMetaAd[] = [];
+  let metadata: ScanMetadata | undefined;
   try {
+    if (input.method === "browser") metadata = browserMetadata(input.payload);
     rows = input.method === "fixture" ? await fixtureRows() : parseManualImport(input.payload);
-    return await persistScan(input.keyword, input.method, rows, undefined, input.country || "ID", targetCount);
+    if (rows.length > 500) throw new Error("IMPORT_LIMIT_EXCEEDED");
   } catch (error) {
     const message = error instanceof Error ? error.message : "SCAN_FAILED";
-    return persistScan(input.keyword, input.method, rows, { code: message, message }, input.country || "ID", targetCount);
+    return persistScan(input.keyword, input.method, rows, { code: message, message }, input.country || "ID", targetCount, metadata);
   }
+  return persistScan(input.keyword, input.method, rows, undefined, input.country || "ID", targetCount, metadata);
 }
 
 export async function getInbox() {
@@ -97,7 +119,7 @@ export async function getInbox() {
   }
   return {
     ads: ads.map(ad => ({ ...ad, startedRunningAt: ad.startedRunningAt?.toISOString() || null, createdAt: ad.createdAt.toISOString(), updatedAt: ad.updatedAt.toISOString(), observations: ad.observations.map(o => ({ ...o, observedAt: o.observedAt.toISOString(), createdAt: o.createdAt.toISOString() })) })),
-    scans: scans.map(s => ({ ...s, createdAt: s.createdAt.toISOString(), startedAt: s.startedAt?.toISOString() || null, finishedAt: s.finishedAt?.toISOString() || null, stopRequestedAt: s.stopRequestedAt?.toISOString() || null, summaryStartedAt: s.summaryStartedAt?.toISOString() || null, insight: serializeInsight(s.insight) })),
+    scans: scans.map(s => ({ ...s, stopReason: s.stopReason && scanStopReasons.has(s.stopReason as MetaAdsScanResult["stopReason"]) ? s.stopReason as MetaAdsScanResult["stopReason"] : null, createdAt: s.createdAt.toISOString(), startedAt: s.startedAt?.toISOString() || null, finishedAt: s.finishedAt?.toISOString() || null, stopRequestedAt: s.stopRequestedAt?.toISOString() || null, summaryStartedAt: s.summaryStartedAt?.toISOString() || null, insight: serializeInsight(s.insight) })),
     opportunities: opportunities.map(o => ({ ...o, createdAt: o.createdAt.toISOString(), updatedAt: o.updatedAt.toISOString(), decisions: o.decisions.map(d => ({ ...d, createdAt: d.createdAt.toISOString() })) })),
     scanSummary,
     latestInsight: serializeInsight(latest?.insight || null)
@@ -136,7 +158,7 @@ export async function requestScanStop(id: string) {
 }
 
 export async function getScanProgress(id: string) {
-  if (!process.env.DATABASE_URL) { const scan = phase2Memory.scans.find(item => item.id === id); if (!scan) throw new Error("SCAN_NOT_FOUND"); return { ...scan, stopReason: null, job: null }; }
+  if (!process.env.DATABASE_URL) { const scan = phase2Memory.scans.find(item => item.id === id); if (!scan) throw new Error("SCAN_NOT_FOUND"); return { ...scan, stopReason: scan.stopReason || null, job: null }; }
   const { db } = await import("@warsneaks/db");
   const scan = await db.adScan.findFirst({ where: { id, workspaceId }, include: { insight: true } });
   if (!scan) throw new Error("SCAN_NOT_FOUND");
@@ -146,7 +168,8 @@ export async function getScanProgress(id: string) {
   ]);
   const effectiveStatus = scan.status === "queued" && job?.status === "running" ? "collecting" : scan.status === "queued" && job?.status === "failed" ? "failed" : scan.status;
   const jobResult = job?.result;
-  const stopReason = jobResult && typeof jobResult === "object" && !Array.isArray(jobResult) && "stopReason" in jobResult && typeof jobResult.stopReason === "string" ? jobResult.stopReason : null;
+  const jobStopReason = jobResult && typeof jobResult === "object" && !Array.isArray(jobResult) && "stopReason" in jobResult && typeof jobResult.stopReason === "string" ? jobResult.stopReason : null;
+  const stopReason = scan.stopReason || jobStopReason;
   return { ...scan, stopReason, insight: scan.insight ? { ...scan.insight, startedAt: scan.insight.startedAt?.toISOString() || null, finishedAt: scan.insight.finishedAt?.toISOString() || null, createdAt: scan.insight.createdAt.toISOString(), updatedAt: scan.insight.updatedAt.toISOString() } : null, status: effectiveStatus, errorCode: scan.errorCode || job?.errorCode || null, createdAt: scan.createdAt.toISOString(), startedAt: (scan.startedAt || job?.startedAt)?.toISOString() || null, finishedAt: (scan.finishedAt || job?.finishedAt)?.toISOString() || null, stopRequestedAt: scan.stopRequestedAt?.toISOString() || null, summaryStartedAt: scan.summaryStartedAt?.toISOString() || null, job: job ? { id: job.id, status: job.status, attempts: job.attempts, createdAt: job.createdAt.toISOString(), startedAt: job.startedAt?.toISOString() || null, finishedAt: job.finishedAt?.toISOString() || null, errorCode: job.errorCode } : null, analysisJob: analysisJob ? { id: analysisJob.id, status: analysisJob.status, attempts: analysisJob.attempts, errorCode: analysisJob.errorCode } : null };
 }
 export async function requestScanAnalysis(id: string) {

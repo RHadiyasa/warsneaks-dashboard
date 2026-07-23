@@ -21,6 +21,8 @@ type WinningAngle = { angle: string; frequency: number; explanation: string; exa
 type Recommendation = { priority: "high" | "medium" | "low"; action: string; rationale: string; evidence: string[] };
 type Risk = { risk: string; explanation: string };
 type InsightRecord = { scanId: string; status: string; model: string; executiveSummary?: string | null; marketVerdict?: string | null; confidence: number; productTrends?: ProductTrend[] | null; duplicateInsights?: DuplicateInsight[] | null; winningAngles?: WinningAngle[] | null; recommendations?: Recommendation[] | null; risks?: Risk[] | null; errorCode?: string | null; errorMessage?: string | null };
+type BrowserScanMessage = { source?: string; type?: string; requestId?: string; count?: number; scrollCount?: number; ads?: unknown[]; error?: string; stopReason?: string };
+type BrowserScanResult = { ads: unknown[]; scrollCount: number; stopReason: ScanStopReason };
 
 const regions: Record<string, string> = { ID: "Indonesia", MY: "Malaysia", SG: "Singapura", PH: "Filipina", TH: "Thailand", VN: "Vietnam", US: "Amerika Serikat" };
 const terminal = new Set(["succeeded", "partial", "failed", "cancelled"]);
@@ -30,16 +32,27 @@ const demoImport = JSON.stringify({ ads: [{ libraryId: "DEMO-MANUAL-01", pageNam
 const verdictLabel: Record<string, string> = { strong_opportunity: "Peluang kuat", watch: "Pantau", insufficient_evidence: "Evidence terbatas", avoid: "Hindari sementara" };
 const signalLabel: Record<ProductTrend["signal"], string> = { dominant_current_scan: "Dominan di scan ini", emerging: "Mulai muncul", rising: "Sedang naik", stable: "Stabil", declining: "Menurun" };
 const scanStopReasonLabel: Record<ScanStopReason, string> = { target_reached: "Target tercapai", user_requested: "Dihentikan pengguna", no_new_results: "Meta tidak memuat hasil baru", max_scrolls: "Batas keamanan scroll tercapai", rate_limited: "Meta membatasi pagination sementara" };
+const browserErrorLabel: Record<string, string> = {
+  EXTENSION_NOT_CONNECTED: "Extension WarSneaks v3 belum terhubung. Unduh ZIP, ekstrak, pilih Load unpacked di chrome://extensions, lalu muat ulang dashboard.",
+  BROWSER_SCAN_TIMEOUT: "Scan tab browser melewati 15 menit. Pastikan tab Meta tetap terbuka lalu coba lagi.",
+  BROWSER_SCAN_EMPTY: "Meta tidak menampilkan iklan yang dapat dibaca untuk pencarian ini.",
+  META_TAB_CREATE_FAILED: "Extension tidak dapat membuka tab Meta Ads Library.",
+  META_TAB_CLOSED: "Tab Meta ditutup sebelum scan selesai. Jalankan ulang dan pertahankan tab tersebut tetap terbuka.",
+  META_TAB_NAVIGATED: "Tab Meta berpindah halaman sebelum scan selesai. Jalankan ulang tanpa menggunakan tab tersebut sampai evidence tersimpan.",
+};
+const isScanStopReason = (value: unknown): value is ScanStopReason => typeof value === "string" && Object.hasOwn(scanStopReasonLabel, value);
+const buildBrowserScanUrl = (keyword: string, country: string) => { const params = new URLSearchParams({ active_status: "active", ad_type: "all", country, is_targeted_country: "false", media_type: "all", q: keyword, search_type: "keyword_unordered", "sort_data[mode]": "total_impressions", "sort_data[direction]": "desc" }); return `https://www.facebook.com/ads/library/?${params.toString()}`; };
 
 export default function MetaAdsInbox({ initial }: { initial: Inbox }) {
   const [data, setData] = useState(initial);
   const [keyword, setKeyword] = useState("sepatu sneakers pria");
   const [country, setCountry] = useState("ID");
   const [targetCount, setTargetCount] = useState(100);
-  const [method, setMethod] = useState("playwright");
+  const [method, setMethod] = useState("browser");
   const [json, setJson] = useState(demoImport);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [extensionReady, setExtensionReady] = useState<boolean | null>(null);
   const [showAds, setShowAds] = useState(false);
   const [query, setQuery] = useState("");
   const [watchedOnly, setWatchedOnly] = useState(false);
@@ -61,6 +74,48 @@ export default function MetaAdsInbox({ initial }: { initial: Inbox }) {
     const timer = window.setInterval(() => void refresh(), 2500);
     return () => window.clearInterval(timer);
   }, [insight?.status]);
+
+  useEffect(() => {
+    const handler = (event: MessageEvent<BrowserScanMessage>) => {
+      if (event.source === window && event.data?.source === "warsneaks-extension" && event.data.type === "WARSNEAKS_EXTENSION_READY") setExtensionReady(true);
+    };
+    const timer = window.setTimeout(() => setExtensionReady(value => value ?? false), 1500);
+    window.addEventListener("message", handler);
+    window.postMessage({ source: "warsneaks-dashboard", type: "WARSNEAKS_EXTENSION_PING" }, window.location.origin);
+    return () => { window.clearTimeout(timer); window.removeEventListener("message", handler); };
+  }, []);
+
+  function collectInBrowser() {
+    const requestId = `browser-${crypto.randomUUID()}`;
+    return new Promise<BrowserScanResult>((resolve, reject) => {
+      let started = false;
+      const cleanup = () => { window.removeEventListener("message", handler); window.clearTimeout(startTimer); window.clearTimeout(overallTimer); };
+      const fail = (code: string) => { cleanup(); reject(new Error(code)); };
+      const handler = (event: MessageEvent<BrowserScanMessage>) => {
+        if (event.source !== window || event.data?.source !== "warsneaks-extension" || event.data.requestId !== requestId) return;
+        if (event.data.type === "WARSNEAKS_META_SCAN_STARTED") {
+          started = true;
+          setModal(value => ({ ...value, scan: { id: requestId, keyword: value.keyword, country: value.country, method: "browser", status: "collecting", resultCount: 0, discoveredCount: 0, scrollCount: 0, progressMessage: "Tab Meta Ads Library dibuka di browser" } }));
+        }
+        if (event.data.type === "WARSNEAKS_META_SCAN_PROGRESS") {
+          const count = event.data.count || 0;
+          setModal(value => ({ ...value, scan: { ...(value.scan || { id: requestId, keyword: value.keyword, country: value.country, method: "browser", status: "collecting", resultCount: 0 }), status: "collecting", discoveredCount: count, resultCount: count, scrollCount: event.data.scrollCount || 0, progressMessage: `${count} iklan terkumpul dari tab browser` } }));
+        }
+        if (event.data.type === "WARSNEAKS_META_SCAN_COMPLETED") {
+          const ads = Array.isArray(event.data.ads) ? event.data.ads : [];
+          const stopReason = isScanStopReason(event.data.stopReason) ? event.data.stopReason : "no_new_results";
+          setModal(value => ({ ...value, scan: { ...(value.scan || { id: requestId, keyword: value.keyword, country: value.country, method: "browser", status: "summarizing", resultCount: ads.length }), status: "summarizing", resultCount: ads.length, discoveredCount: ads.length, scrollCount: event.data.scrollCount || 0, stopReason, progressMessage: `Mengirim ${ads.length} iklan ke WarSneaks` } }));
+          cleanup();
+          resolve({ ads, scrollCount: event.data.scrollCount || 0, stopReason });
+        }
+        if (event.data.type === "WARSNEAKS_META_SCAN_ERROR") fail(event.data.error || "BROWSER_SCAN_FAILED");
+      };
+      const startTimer = window.setTimeout(() => { if (!started) fail("EXTENSION_NOT_CONNECTED"); }, 8000);
+      const overallTimer = window.setTimeout(() => fail("BROWSER_SCAN_TIMEOUT"), 15 * 60_000);
+      window.addEventListener("message", handler);
+      window.postMessage({ source: "warsneaks-dashboard", type: "WARSNEAKS_START_META_SCAN", requestId, url: buildBrowserScanUrl(keyword, country), targetCount }, window.location.origin);
+    });
+  }
 
   async function pollScan(scanId: string) {
     for (let attempt = 0; attempt < 240; attempt += 1) {
@@ -84,21 +139,36 @@ export default function MetaAdsInbox({ initial }: { initial: Inbox }) {
     try {
       let payload: unknown;
       if (method === "manual") payload = JSON.parse(json);
+      if (method === "browser") {
+        const browserResult = await collectInBrowser();
+        if (!browserResult.ads.length) throw new Error("BROWSER_SCAN_EMPTY");
+        payload = browserResult;
+      }
       const response = await fetch("/api/meta-ads/scans", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ keyword, country, targetCount, method, payload }) });
       const created: Scan & { code?: string } = await response.json();
       if (!response.ok) throw new Error(created.code || "SCAN_FAILED");
       setModal(value => ({ ...value, scan: created }));
-      const finished = method === "playwright" && !terminal.has(created.status) ? await pollScan(created.id) : created;
+      let finished = method === "playwright" && !terminal.has(created.status) ? await pollScan(created.id) : created;
+      if (method === "browser" && created.resultCount > 0) {
+        const analysis = await fetch(`/api/meta-ads/scans/${created.id}/analyze`, { method: "POST" });
+        if (!analysis.ok) throw new Error("INSIGHT_QUEUE_FAILED");
+        finished = await pollScan(created.id);
+      }
       if (["failed", "partial"].includes(finished.status)) setError(`Scan ${finished.status}: ${finished.errorCode || "UNKNOWN_ERROR"}. Evidence lama tetap aman.`);
       await refresh();
     } catch (reason) {
       const message = reason instanceof Error ? reason.message : "SCAN_FAILED";
-      setError(message);
+      setError(browserErrorLabel[message] || message);
       setModal(value => ({ ...value, scan: value.scan ? { ...value.scan, status: "failed", errorCode: message } : { id: "local-error", keyword: value.keyword, country: value.country, status: "failed", resultCount: 0, errorCode: message } }));
     } finally { setBusy(false); }
   }
 
   async function stopScan(scanId: string) {
+    if (scanId.startsWith("browser-")) {
+      window.postMessage({ source: "warsneaks-dashboard", type: "WARSNEAKS_STOP_META_SCAN", requestId: scanId }, window.location.origin);
+      setModal(value => ({ ...value, scan: value.scan ? { ...value.scan, status: "stop_requested", progressMessage: "Menghentikan scan pada tab browser" } : null }));
+      return;
+    }
     const response = await fetch(`/api/meta-ads/scans/${scanId}/stop`, { method: "POST" });
     if (!response.ok) return setError("Permintaan stop gagal dikirim.");
     const stopped: Scan = await response.json();
@@ -127,7 +197,20 @@ export default function MetaAdsInbox({ initial }: { initial: Inbox }) {
   return <main className="mi-page">
     <header className="mi-header"><div><a href="/dashboard" className="mi-back">← Command Center</a><div className="mi-kicker"><span className="mi-live-dot" /> MARKET INTELLIGENCE · DEEPSEEK FLASH</div><h1>Keputusan pasar, <span>bukan tumpukan data.</span></h1><p>WarSneaks mengumpulkan evidence Meta Ads lalu DeepSeek merangkumnya menjadi produk, pola, dan tindakan.</p></div><button className="mi-outline-button" onClick={() => setShowAds(true)}>Lihat semua iklan <b>{data.ads.length}</b></button></header>
 
-    <section className="mi-scan-bar"><label className="mi-keyword"><span>Keyword</span><input value={keyword} onChange={event => setKeyword(event.target.value)} placeholder="Contoh: gamis wanita" /></label><label><span>Region</span><select value={country} onChange={event => setCountry(event.target.value)}>{Object.entries(regions).map(([code, name]) => <option value={code} key={code}>{name}</option>)}</select></label><label><span>Kategori</span><select value="all" disabled><option value="all">All ads</option></select></label><label><span>Target iklan</span><input type="number" min="10" max="500" value={targetCount} onChange={event => setTargetCount(Math.min(500, Math.max(10, Number(event.target.value) || 10)))} /></label><label><span>Metode</span><select value={method} onChange={event => setMethod(event.target.value)}><option value="playwright">Playwright live</option><option value="fixture">Fixture regression</option><option value="manual">JSON import</option></select></label><button className="mi-primary-button" onClick={scan} disabled={busy || keyword.length < 2}>{busy ? "Berjalan…" : "Mulai analisis"}</button>{method === "manual" && <textarea value={json} onChange={event => setJson(event.target.value)} aria-label="JSON import" />}</section>
+    <section className="mi-scan-bar">
+      <label className="mi-keyword"><span>Keyword</span><input value={keyword} onChange={event => setKeyword(event.target.value)} placeholder="Contoh: gamis wanita" /></label>
+      <label><span>Region</span><select value={country} onChange={event => setCountry(event.target.value)}>{Object.entries(regions).map(([code, name]) => <option value={code} key={code}>{name}</option>)}</select></label>
+      <label><span>Kategori</span><select value="all" disabled><option value="all">All ads</option></select></label>
+      <label><span>Target iklan</span><input type="number" min="10" max="500" value={targetCount} onChange={event => setTargetCount(Math.min(500, Math.max(10, Number(event.target.value) || 10)))} /></label>
+      <label><span>Metode</span><select value={method} onChange={event => setMethod(event.target.value)}><option value="browser">Tab browser pengguna</option><option value="fixture">Fixture regression</option><option value="manual">JSON import</option></select></label>
+      <button className="mi-primary-button" onClick={scan} disabled={busy || keyword.length < 2}>{busy ? "Berjalan…" : "Mulai analisis"}</button>
+      {method === "browser" && <div className="mi-browser-note">
+        <span className={`mi-extension-status ${extensionReady ? "ready" : extensionReady === false ? "missing" : "checking"}`}>{extensionReady ? "Extension terhubung" : extensionReady === false ? "Extension belum terhubung" : "Memeriksa extension"}</span>
+        <span>Tab Meta akan terlihat dan berjalan di laptop ini. Pertahankan tab Meta serta dashboard tetap terbuka sampai evidence tersimpan.</span>
+        <span><a href="/warsneaks-meta-extension.zip" download>Unduh extension v3</a> · ekstrak ZIP · buka chrome://extensions · aktifkan Developer mode · Load unpacked · muat ulang dashboard.</span>
+      </div>}
+      {method === "manual" && <textarea value={json} onChange={event => setJson(event.target.value)} aria-label="JSON import" />}
+    </section>
     {error && <div className="mi-error">{error}</div>}
 
     {!summary ? <EmptyInsight onScan={scan} /> : <>
@@ -175,6 +258,7 @@ function AdsDrawer({ ads, allCount, active, query, watchedOnly, onQuery, onWatch
 
 function ScanProgressModal({ state, onClose, onStop }: { state: ModalState; onClose: () => void; onStop: (scanId: string) => Promise<void> }) {
   const scanStatus = state.scan?.status || "submitting";
+  const browserScan = state.scan?.method === "browser" || state.scan?.id.startsWith("browser-") === true;
   const aiStatus = state.scan?.insight?.status;
   const displayStatus = terminal.has(scanStatus) && ["queued", "running"].includes(aiStatus || "") ? "analyzing" : scanStatus;
   const scanFinished = terminal.has(scanStatus);
@@ -185,5 +269,5 @@ function ScanProgressModal({ state, onClose, onStop }: { state: ModalState; onCl
   const canStop = Boolean(state.scan?.id && !scanFinished && !["summarizing", "stop_requested"].includes(scanStatus));
   const stopReasonLabel = state.scan?.stopReason ? scanStopReasonLabel[state.scan.stopReason] : null;
   useEffect(() => { const handler = (event: KeyboardEvent) => { if (event.key === "Escape" && isTerminal) onClose(); }; window.addEventListener("keydown", handler); return () => window.removeEventListener("keydown", handler); }, [isTerminal, onClose]);
-  return <div className="mi-modal-backdrop"><section className="mi-scan-modal" role="dialog" aria-modal="true" aria-live="polite"><header><div><p className="mi-eyebrow">LIVE MARKET ANALYSIS</p><h2>“{state.keyword}”</h2></div><span className={displayStatus}>{displayStatus.replace("_", " ")}</span></header><div className="mi-modal-filter">{regions[state.country] || state.country} · All ads · Active ads</div><div className="mi-live-count live-scan-counter"><CountUp to={discovered} duration={.5} /><div><b>dari target {target}</b><small>Auto-scroll {state.scan?.scrollCount || 0}</small></div></div><div className="mi-progress"><span style={{ width: `${progress}%` }} /></div><div className="mi-modal-stages"><article className={scanStatus !== "submitting" ? "done" : "active"}><span>1</span><div><b>Antrean tersimpan</b><small>Job durable di PostgreSQL</small></div></article><article className={["collecting", "running", "stop_requested"].includes(scanStatus) ? "active" : scanFinished || ["summarizing"].includes(scanStatus) ? "done" : ""}><span>2</span><div><b>Playwright mengumpulkan iklan</b><small>{state.scan?.progressMessage || "Menyiapkan browser"}</small></div></article><article className={displayStatus === "summarizing" ? "active" : scanFinished ? "done" : ""}><span>3</span><div><b>Normalisasi evidence</b><small>Library ID dan duplicate fingerprint</small></div></article><article className={displayStatus === "analyzing" ? "active" : aiStatus === "succeeded" ? "done" : ""}><span>4</span><div><b>DeepSeek merangkum</b><small>Produk, angle, risiko, dan tindakan</small></div></article></div>{scanFinished && stopReasonLabel && <div className="mi-modal-filter">Alasan berhenti · <b>{stopReasonLabel}</b></div>}{state.scan?.insight?.status === "failed" && <div className="mi-error">Evidence tersimpan, tetapi DeepSeek gagal: {state.scan.insight.errorCode}</div>}<footer><small>Scan ID · {state.scan?.id || "menunggu"}</small><div>{canStop && <button className="mi-stop-button" onClick={() => void onStop(state.scan!.id)}>Stop & rangkum</button>}{isTerminal ? <button className="mi-primary-button" onClick={onClose}>Lihat insight</button> : <button className="mi-ghost-button" onClick={onClose}>Jalankan di background</button>}</div></footer></section></div>;
+  return <div className="mi-modal-backdrop"><section className="mi-scan-modal" role="dialog" aria-modal="true" aria-live="polite"><header><div><p className="mi-eyebrow">LIVE MARKET ANALYSIS</p><h2>“{state.keyword}”</h2></div><span className={displayStatus}>{displayStatus.replace("_", " ")}</span></header><div className="mi-modal-filter">{regions[state.country] || state.country} · All ads · Active ads</div><div className="mi-live-count live-scan-counter"><CountUp to={discovered} duration={.5} /><div><b>dari target {target}</b><small>Auto-scroll {state.scan?.scrollCount || 0}</small></div></div><div className="mi-progress"><span style={{ width: `${progress}%` }} /></div><div className="mi-modal-stages"><article className={scanStatus !== "submitting" ? "done" : "active"}><span>1</span><div><b>{browserScan ? "Extension terhubung" : "Antrean tersimpan"}</b><small>{browserScan ? "Tab Meta dibuka di laptop ini" : "Job durable di PostgreSQL"}</small></div></article><article className={["collecting", "running", "stop_requested"].includes(scanStatus) ? "active" : scanFinished || ["summarizing"].includes(scanStatus) ? "done" : ""}><span>2</span><div><b>{browserScan ? "Tab browser mengumpulkan iklan" : "Playwright mengumpulkan iklan"}</b><small>{state.scan?.progressMessage || "Menyiapkan browser"}</small></div></article><article className={displayStatus === "summarizing" ? "active" : scanFinished ? "done" : ""}><span>3</span><div><b>Normalisasi evidence</b><small>Library ID dan duplicate fingerprint</small></div></article><article className={displayStatus === "analyzing" ? "active" : aiStatus === "succeeded" ? "done" : ""}><span>4</span><div><b>DeepSeek merangkum</b><small>Produk, angle, risiko, dan tindakan</small></div></article></div>{browserScan && !scanFinished && <div className="mi-modal-filter">Jaga tab Meta dan dashboard tetap terbuka sampai tahap normalisasi.</div>}{scanFinished && stopReasonLabel && <div className="mi-modal-filter">Alasan berhenti · <b>{stopReasonLabel}</b></div>}{state.scan?.insight?.status === "failed" && <div className="mi-error">Evidence tersimpan, tetapi DeepSeek gagal: {state.scan.insight.errorCode}</div>}<footer><small>Scan ID · {state.scan?.id || "menunggu"}</small><div>{canStop && <button className="mi-stop-button" onClick={() => void onStop(state.scan!.id)}>Stop & rangkum</button>}{isTerminal ? <button className="mi-primary-button" onClick={onClose}>Lihat insight</button> : <button className="mi-ghost-button" onClick={onClose}>{browserScan ? "Sembunyikan panel" : "Jalankan di background"}</button>}</div></footer></section></div>;
 }

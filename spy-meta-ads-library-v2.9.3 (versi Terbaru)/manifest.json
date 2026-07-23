@@ -1,10 +1,11 @@
 {
   "manifest_version": 3,
   "name": "Spy Meta Ads Library",
-  "version": "2.9.3",
+  "version": "3.0.0",
   "description": "Spy & download konten iklan. Auto-scroll, REKAP TEKS IKLAN lengkap!",
   "permissions": [
     "activeTab",
+    "tabs",
     "scripting",
     "storage",
     "sidePanel"
@@ -12,7 +13,30 @@
   "host_permissions": [
     "https://www.facebook.com/*",
     "https://web.facebook.com/*",
-    "https://*.facebook.com/*"
+    "https://*.facebook.com/*",
+    "https://warsneaks.ravisa.space/*",
+    "http://localhost:3000/*",
+    "http://localhost:3001/*",
+    "http://127.0.0.1:3000/*",
+    "http://127.0.0.1:3001/*"
+  ],
+  "content_scripts": [
+    {
+      "matches": ["https://warsneaks.ravisa.space/*", "http://localhost:3000/*", "http://localhost:3001/*", "http://127.0.0.1:3000/*", "http://127.0.0.1:3001/*"],
+      "js": ["warsneaks-bridge.js"],
+      "run_at": "document_start"
+    },
+    {
+      "matches": ["https://www.facebook.com/ads/library/*", "https://web.facebook.com/ads/library/*"],
+      "js": ["facebook-bridge.js"],
+      "run_at": "document_start"
+    },
+    {
+      "matches": ["https://www.facebook.com/ads/library/*", "https://web.facebook.com/ads/library/*"],
+      "js": ["warsneaks-scanner.js"],
+      "run_at": "document_start",
+      "world": "MAIN"
+    }
   ],
   "action": {
     "default_icon": {

@@ -156,7 +156,7 @@ async function processScanJob(job: { id: string; workspaceId: string; payload: P
       },
       onProgress: progress => persistBatch(job.workspaceId, payload.scanId, progress.newAds, progress.discoveredCount, progress.scrollCount)
     });
-    await db.adScan.update({ where: { id: payload.scanId }, data: { status: "summarizing", summaryStartedAt: new Date(), scrollCount: result.scrollCount, progressMessage: `Mengelompokkan ${result.ads.length} iklan` } });
+    await db.adScan.update({ where: { id: payload.scanId }, data: { status: "summarizing", summaryStartedAt: new Date(), scrollCount: result.scrollCount, stopReason: result.stopReason, progressMessage: `Mengelompokkan ${result.ads.length} iklan` } });
     const summary = await summarizeScan(payload.scanId);
     const progressMessage = scanCompletionMessage(result.stopReason, summary.resultCount, payload.targetCount || 100);
     await db.$transaction([
@@ -192,7 +192,7 @@ async function processNext() {
     if (candidate.type === "meta_ads.analyze_scan") {
       await tx.scanInsight.upsert({ where: { scanId: payload.scanId }, update: { status: "running", startedAt: new Date(), errorCode: null, errorMessage: null }, create: { scanId: payload.scanId, status: "running", model: process.env.DEEPSEEK_MODEL || "deepseek-v4-flash", startedAt: new Date() } });
     } else {
-      await tx.adScan.update({ where: { id: payload.scanId }, data: { status: "collecting", startedAt: new Date(), errorCode: null, errorMessage: null, progressMessage: "Playwright membuka Meta Ads Library" } });
+      await tx.adScan.update({ where: { id: payload.scanId }, data: { status: "collecting", startedAt: new Date(), stopReason: null, errorCode: null, errorMessage: null, progressMessage: "Playwright membuka Meta Ads Library" } });
     }
     return claimed;
   });

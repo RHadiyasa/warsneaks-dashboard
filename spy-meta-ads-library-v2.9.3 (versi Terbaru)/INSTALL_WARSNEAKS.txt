@@ -1,0 +1,12 @@
+INSTALASI EXTENSION WARSNEAKS V3
+
+1. Ekstrak seluruh isi ZIP ke satu folder tetap.
+2. Buka chrome://extensions di Google Chrome.
+3. Aktifkan Developer mode di kanan atas.
+4. Klik Load unpacked lalu pilih folder hasil ekstrak yang berisi manifest.json.
+5. Muat ulang halaman dashboard WarSneaks.
+6. Pastikan label "Extension terhubung" tampil sebelum memulai scan.
+
+Saat scan berjalan, pertahankan tab Meta Ads Library dan dashboard tetap terbuka.
+Extension akan melakukan scroll pada tab Meta yang terlihat, lalu mengirim evidence
+kembali ke WarSneaks untuk disimpan dan dianalisis.

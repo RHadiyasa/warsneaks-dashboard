@@ -21,7 +21,123 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       .catch(err => sendResponse({ success: false, error: err.message }));
     return true;
   }
+  if (message.type === 'WARSNEAKS_START_META_SCAN') {
+    startDashboardScan(message, sender)
+      .then(result => sendResponse(result))
+      .catch(error => sendResponse({ error: error.message || 'BROWSER_SCAN_START_FAILED' }));
+    return true;
+  }
+  if (message.type === 'WARSNEAKS_STOP_META_SCAN') {
+    stopDashboardScan(message.requestId)
+      .then(result => sendResponse(result))
+      .catch(error => sendResponse({ error: error.message || 'BROWSER_SCAN_STOP_FAILED' }));
+    return true;
+  }
+  if (message.type === 'WARSNEAKS_META_SCAN_EVENT') {
+    forwardScanEvent(message.event, sender.tab?.id).catch(() => {});
+    sendResponse({ success: true });
+    return;
+  }
+  if (message.type === 'WARSNEAKS_GET_TAB_SCAN') {
+    getTabScan(sender.tab?.id).then(result => sendResponse(result)).catch(() => sendResponse(null));
+    return true;
+  }
+  if (message.type === 'WARSNEAKS_EXTENSION_PING') {
+    sendResponse({ success: true, version: chrome.runtime.getManifest().version });
+  }
 });
+
+const scanStateKey = requestId => `warsneaks-meta-scan:${requestId}`;
+const tabStateKey = tabId => `warsneaks-meta-tab:${tabId}`;
+
+async function getTabScan(tabId) {
+  if (!tabId) return null;
+  return (await chrome.storage.session.get(tabStateKey(tabId)))[tabStateKey(tabId)] || null;
+}
+
+function assertDashboardSender(sender) {
+  const url = new URL(sender.tab?.url || '');
+  const isLocalDevelopment = ['localhost', '127.0.0.1'].includes(url.hostname) && ['3000', '3001'].includes(url.port);
+  const allowed = url.hostname === 'warsneaks.ravisa.space' || isLocalDevelopment;
+  if (!allowed || !sender.tab?.id) throw new Error('DASHBOARD_ORIGIN_NOT_ALLOWED');
+  return sender.tab.id;
+}
+
+function assertMetaAdsUrl(value) {
+  const url = new URL(value);
+  if (!['www.facebook.com', 'web.facebook.com'].includes(url.hostname) || !url.pathname.startsWith('/ads/library/')) throw new Error('INVALID_META_ADS_URL');
+  return url.href;
+}
+
+function isMetaAdsUrl(value) {
+  try {
+    const url = new URL(value);
+    return ['www.facebook.com', 'web.facebook.com'].includes(url.hostname) && url.pathname.startsWith('/ads/library/');
+  } catch {
+    return false;
+  }
+}
+
+async function startDashboardScan(message, sender) {
+  const dashboardTabId = assertDashboardSender(sender);
+  const requestId = String(message.requestId || '');
+  if (!requestId.startsWith('browser-')) throw new Error('INVALID_SCAN_REQUEST');
+  const targetCount = Math.min(500, Math.max(10, Number(message.targetCount) || 100));
+  const tab = await chrome.tabs.create({ url: assertMetaAdsUrl(message.url), active: true, openerTabId: dashboardTabId });
+  if (!tab.id) throw new Error('META_TAB_CREATE_FAILED');
+  const scanState = { requestId, dashboardTabId, metaTabId: tab.id, targetCount };
+  await chrome.storage.session.set({ [scanStateKey(requestId)]: scanState, [tabStateKey(tab.id)]: scanState });
+  await chrome.tabs.sendMessage(dashboardTabId, { source: 'warsneaks-extension', type: 'WARSNEAKS_META_SCAN_STARTED', requestId, metaTabId: tab.id });
+  return { success: true, requestId, metaTabId: tab.id };
+}
+
+async function stopDashboardScan(requestId) {
+  const key = scanStateKey(requestId);
+  const state = (await chrome.storage.session.get(key))[key];
+  if (!state) throw new Error('BROWSER_SCAN_NOT_FOUND');
+  await chrome.tabs.sendMessage(state.metaTabId, { type: 'WARSNEAKS_STOP_SCANNER', requestId });
+  return { success: true };
+}
+
+async function forwardScanEvent(event, metaTabId) {
+  const requestId = String(event?.requestId || '');
+  const key = scanStateKey(requestId);
+  const state = (await chrome.storage.session.get(key))[key];
+  if (!state || state.metaTabId !== metaTabId) return;
+  const terminal = ['WARSNEAKS_META_SCAN_COMPLETED', 'WARSNEAKS_META_SCAN_ERROR'].includes(event.type);
+  try {
+    await chrome.tabs.sendMessage(state.dashboardTabId, { ...event, source: 'warsneaks-extension' });
+  } finally {
+    if (terminal) {
+      await chrome.storage.session.remove([key, tabStateKey(state.metaTabId)]);
+      await chrome.tabs.update(state.dashboardTabId, { active: true }).catch(() => {});
+    }
+  }
+}
+
+async function handleClosedMetaTab(tabId) {
+  const state = await getTabScan(tabId);
+  if (!state) return;
+  await chrome.storage.session.remove([scanStateKey(state.requestId), tabStateKey(tabId)]);
+  await chrome.tabs.sendMessage(state.dashboardTabId, {
+    source: 'warsneaks-extension',
+    type: 'WARSNEAKS_META_SCAN_ERROR',
+    requestId: state.requestId,
+    error: 'META_TAB_CLOSED',
+  }).catch(() => {});
+}
+
+async function handleMetaTabNavigation(tabId, url) {
+  const state = await getTabScan(tabId);
+  if (!state || isMetaAdsUrl(url)) return;
+  await chrome.storage.session.remove([scanStateKey(state.requestId), tabStateKey(tabId)]);
+  await chrome.tabs.sendMessage(state.dashboardTabId, {
+    source: 'warsneaks-extension',
+    type: 'WARSNEAKS_META_SCAN_ERROR',
+    requestId: state.requestId,
+    error: 'META_TAB_NAVIGATED',
+  }).catch(() => {});
+}
 
 async function injectContentScript(tabId) {
   if (injectedTabs.has(tabId)) return;
@@ -47,7 +163,14 @@ function initScanner() {
     observer: null,
     autoScrolling: false,
     scrollInterval: null,
-    lastScrollHeight: 0
+    lastScrollHeight: 0,
+    lastProgressAt: 0,
+    lastCount: 0,
+    lastLoadMoreClickAt: 0,
+    targetCount: 100,
+    scrollCount: 0,
+    requestId: null,
+    stopReason: null
   };
   const scanner = window.__adsScanner;
   
@@ -348,129 +471,115 @@ function initScanner() {
   
   function scan() {
     try {
-      const allDivs = document.querySelectorAll('div');
-      const cards = [];
-      
-      allDivs.forEach(div => {
-        try {
-          const text = div.textContent || '';
-          
-          const hasDuplicateIndicator = 
-            text.includes('iklan menggunakan materi iklan dan teks ini') ||
-            text.includes('iklan menggunakan materi iklan') ||
-            text.includes('ads use this creative and text') ||
-            text.includes('ads are using the same creative');
-          
-          if (hasDuplicateIndicator) {
-            let candidate = div;
-            for (let i = 0; i < 8; i++) {
-              if (!candidate.parentElement) break;
-              candidate = candidate.parentElement;
-              
-              const candidateText = candidate.textContent || '';
-              
-              const hasGalleryId = candidateText.includes('ID Galeri') || candidateText.includes('Library ID');
-              const hasStatus = candidateText.includes('Aktif') || candidateText.includes('Active');
-              const hasMinLength = candidateText.length > 200;
-              const hasMaxLength = candidateText.length < 10000;
-              
-              if ((hasGalleryId || hasStatus) && hasMinLength && hasMaxLength && !cards.includes(candidate)) {
-                cards.push(candidate);
-                break;
-              }
-            }
-          }
-        } catch (e) {}
+      const idPattern = /(?:ID Galeri|Library ID):\s*\d+/i;
+      const idElements = [...document.querySelectorAll('div, span')].filter(element => {
+        const text = (element.textContent || '').trim();
+        return idPattern.test(text) && ![...element.children].some(child => idPattern.test((child.textContent || '').trim()));
       });
-      
-      const seen = new Set(scanner.ads.map(a => a._hash));
+      const cards = [];
+      idElements.forEach(element => {
+        let candidate = element;
+        for (let i = 0; i < 14 && candidate.parentElement; i++) {
+          candidate = candidate.parentElement;
+          const text = candidate.textContent || '';
+          const ids = [...new Set((text.match(/(?:ID Galeri|Library ID):\s*\d+/gi) || []).map(value => value.match(/\d+/)?.[0]))];
+          const hasDetails = /Lihat Detail Iklan|See ad details/i.test(text);
+          if (hasDetails && ids.length === 1 && text.length > 100 && text.length < 20000) {
+            if (!cards.includes(candidate)) cards.push(candidate);
+            break;
+          }
+        }
+      });
+
+      const seen = new Set(scanner.ads.map(ad => ad.adId));
       let newCount = 0;
-      
       cards.forEach(card => {
         try {
           const data = extractAdData(card);
-          if (data && !seen.has(data._hash)) {
+          if (data && !seen.has(data.adId) && scanner.ads.length < scanner.targetCount) {
             scanner.ads.push(data);
-            seen.add(data._hash);
+            seen.add(data.adId);
             newCount++;
           }
         } catch (e) {}
       });
-      
+      if (scanner.ads.length !== scanner.lastCount) {
+        scanner.lastCount = scanner.ads.length;
+        scanner.lastProgressAt = Date.now();
+      }
       return newCount;
     } catch (e) {
       return 0;
     }
   }
   
-  scanner.start = function(enableAutoScroll = false) {
+  function emit(type, extra = {}) {
+    if (!scanner.requestId) return;
+    window.postMessage({ source: 'warsneaks-meta-scanner', type, requestId: scanner.requestId, count: scanner.ads.length, scrollCount: scanner.scrollCount, ...extra }, window.location.origin);
+  }
+
+  function finish(reason) {
+    if (scanner.stopReason) return;
+    scan();
+    scanner.stopReason = reason;
+    scanner.scanning = false;
+    scanner.autoScrolling = false;
+    if (scanner.observer) scanner.observer.disconnect();
+    if (scanner.scrollInterval) clearInterval(scanner.scrollInterval);
+    scanner.scrollInterval = null;
+    emit('WARSNEAKS_META_SCAN_COMPLETED', { ads: scanner.ads.slice(0, scanner.targetCount), stopReason: reason });
+  }
+
+  scanner.start = function(enableAutoScroll = false, targetCount = 100, requestId = null) {
+    if (scanner.scrollInterval) clearInterval(scanner.scrollInterval);
+    if (scanner.observer) scanner.observer.disconnect();
+    scanner.ads = [];
     scanner.scanning = true;
     scanner.autoScrolling = enableAutoScroll;
+    scanner.targetCount = Math.min(500, Math.max(10, Number(targetCount) || 100));
+    scanner.requestId = requestId;
+    scanner.stopReason = null;
+    scanner.scrollCount = 0;
+    scanner.lastCount = 0;
+    scanner.lastProgressAt = Date.now();
+    scanner.lastLoadMoreClickAt = 0;
     scan();
-    
-    if (scanner.observer) scanner.observer.disconnect();
-    
+    emit('WARSNEAKS_META_SCAN_PROGRESS');
+
     scanner.observer = new MutationObserver(() => {
       if (!scanner.scanning) return;
       clearTimeout(window.__scanTimer);
-      window.__scanTimer = setTimeout(scan, 500);
+      window.__scanTimer = setTimeout(() => {
+        scan();
+        emit('WARSNEAKS_META_SCAN_PROGRESS');
+        if (scanner.ads.length >= scanner.targetCount) finish('target_reached');
+      }, 400);
     });
-    
-    scanner.observer.observe(document.body, {
-      childList: true,
-      subtree: true
-    });
-    
-    // AUTO-SCROLL FUNCTIONALITY
+    scanner.observer.observe(document.body, { childList: true, subtree: true });
+
     if (enableAutoScroll) {
-      scanner.lastScrollHeight = 0;
-      
       scanner.scrollInterval = setInterval(() => {
-        if (!scanner.scanning || !scanner.autoScrolling) {
-          clearInterval(scanner.scrollInterval);
-          return;
+        if (!scanner.scanning || !scanner.autoScrolling) return;
+        scan();
+        emit('WARSNEAKS_META_SCAN_PROGRESS');
+        if (scanner.ads.length >= scanner.targetCount) return finish('target_reached');
+        const atBottom = window.scrollY + window.innerHeight >= document.documentElement.scrollHeight - 120;
+        if (atBottom) {
+          const loadMore = [...document.querySelectorAll('[role="button"]')].find(element => /^(?:Lihat lebih banyak|See more)$/i.test((element.textContent || '').trim().replace(/\s+/g, ' ')));
+          if (loadMore && Date.now() - scanner.lastLoadMoreClickAt > 3000) {
+            scanner.lastLoadMoreClickAt = Date.now();
+            loadMore.click();
+          }
         }
-        
-        const currentScrollHeight = document.documentElement.scrollHeight;
-        const scrollPosition = window.pageYOffset + window.innerHeight;
-        
-        // Check if we've reached the bottom
-        if (scrollPosition >= document.documentElement.scrollHeight - 100) {
-          // Wait a bit for new content to load
-          setTimeout(() => {
-            const newScrollHeight = document.documentElement.scrollHeight;
-            
-            // If no new content loaded after 2 seconds, we're done
-            if (newScrollHeight === scanner.lastScrollHeight) {
-              scanner.autoScrolling = false;
-              clearInterval(scanner.scrollInterval);
-              console.log('[Auto-Scroll] Reached end of page');
-            } else {
-              scanner.lastScrollHeight = newScrollHeight;
-            }
-          }, 2000);
-        }
-        
-        // Smooth scroll down
-        window.scrollBy({
-          top: 300, // Scroll 300px at a time
-          behavior: 'smooth'
-        });
-        
-      }, 1000); // Scroll every 1 second
+        window.scrollBy({ top: Math.max(500, window.innerHeight * 0.75), behavior: 'smooth' });
+        scanner.scrollCount += 1;
+        if (Date.now() - scanner.lastProgressAt >= 20000) finish('no_new_results');
+      }, 900);
     }
   };
-  
-  scanner.stop = function() {
-    scanner.scanning = false;
-    scanner.autoScrolling = false;
-    
-    if (scanner.observer) scanner.observer.disconnect();
-    
-    if (scanner.scrollInterval) {
-      clearInterval(scanner.scrollInterval);
-      scanner.scrollInterval = null;
-    }
+
+  scanner.stop = function(reason = 'user_requested') {
+    finish(reason);
   };
   
   scanner.getAds = function() {
@@ -486,4 +595,9 @@ function initScanner() {
 
 chrome.tabs.onRemoved.addListener((tabId) => {
   injectedTabs.delete(tabId);
+  handleClosedMetaTab(tabId).catch(() => {});
+});
+
+chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
+  if (changeInfo.url) handleMetaTabNavigation(tabId, changeInfo.url).catch(() => {});
 });

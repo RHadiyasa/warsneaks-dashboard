@@ -197,6 +197,7 @@ model AdScan {
   highDuplicateCount  Int             @default(0)
   advertiserCount     Int             @default(0)
   progressMessage     String?
+  stopReason          String?
   stopRequestedAt     DateTime?
   summaryStartedAt    DateTime?
   errorCode           String?
